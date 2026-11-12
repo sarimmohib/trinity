@@ -7,26 +7,81 @@ with name-based and keyword-based blocking for messages and calls.
 Calls  ·  Messages  ·  Contacts        one surface, three tabs
 ```
 
-## The look — a hard rule
+> **Work in progress.** Trinity is being used day to day by its author on a Xiaomi
+> `spes` running Android 16, and is not released. Expect rough edges.
 
-**Paper & ink. Strictly achromatic.** No purple, no neon, no deep blue, no red,
-green or orange, and **no gradients anywhere**. Hierarchy comes from weight, scale
-and visible hairline rules — never from hue.
+## The look — translucent Expressive glass
 
-| Token | Value | Used for |
-| --- | --- | --- |
-| `BONE` | `#F1EDE4` | app background |
-| `PAPER` | `#FAF8F2` | raised surface (headers, tab bar, fields) |
-| `INK` | `#17160F` | primary text, filled controls |
-| `MUT` | `#6D6A5C` | secondary text |
-| `FAINT` | `#9C9788` | tertiary text / labels |
-| `LINE` | `#C6BEA8` | **row borders** — dark enough that adjacent contacts never blur together |
-| `LINE_SOFT` | `#DCD6C8` | section rules only |
-| `WASH` | `#E7E2D5` | inert fill (avatars, flagged cards) |
+Every tappable thing is a rounded, faintly translucent block with a colour of its
+own that lets the page show through it. Nothing sits on a solid slab, and **there
+are no gradients anywhere** — the frosted quality comes from texture, not gloss:
+a 1px diagonal weave every 7dp under a white hairline edge.
 
-The same eight values live in `app/src/main/java/com/sarim/trinity/ui/theme/Theme.kt`
-(`Palette`) and in `design/build-design.js`. If you add a colour, you are changing
-the brief — don't.
+The recipe lives in one place, `Modifier.glassBlock(tint, radius, strength)`
+(`ui/components/Common.kt`):
+
+| Part | Value |
+| --- | --- |
+| tint alpha | `0.26` light / `0.28` dark, scaled by `strength`, capped at `0.9` |
+| edge | `0.8dp` white, `60%` light / `12%` dark |
+| texture | diagonal white lines, `34%` light / `5%` dark |
+| radius | `18dp`–`26dp` (`20dp` default) |
+
+Colour is fixed, not taken from the wallpaper: the Expressive scheme in
+`ui/theme/Theme.kt` uses three roles only, so a wallpaper can never drag purple or
+indigo into the app.
+
+| Role | Light | Dark | Used for |
+| --- | --- | --- | --- |
+| primary (green) | `#2E7A61` | `#8FD5BC` | active tab, primary action, selection bar |
+| secondary (blue) | `#2B5D8C` | `#A9C8EA` | search fields, secondary actions |
+| tertiary (teal) | `#1F7A8C` | `#8FD1DE` | WhatsApp actions |
+| background | `#F3F8F5` | `#0E1412` | page behind the glass |
+| surface | `#FAFDFB` | `#111816` | sheets and composers |
+| on surface | `#171D1A` | `#DDE5E0` | text |
+
+Each person also gets a tint cycled from the container roles, so a list reads as a
+stack of differently coloured pieces rather than one repeated block.
+
+Brightness is the only setting: **Follow the system**, Light or Dark, and it only
+picks the light or dark Expressive scheme. It never falls back to the old Material
+look. If you add a colour, add a role; if you add a gradient, you are changing the
+brief.
+
+## Selection
+
+Long-press any row in **Calls**, **Messages**, **Contacts** or a chat to start
+picking; tapping then adds or removes rows instead of opening them. The tab's
+bottom action is replaced by a selection bar with the count and what can be done:
+
+| Where | Actions |
+| --- | --- |
+| Conversations | Read, Mute/Unmute, Delete, All (+ Actions opens the single-row sheet) |
+| Calls | Copy numbers, Block, Delete, All (+ Info) |
+| Contacts | Copy numbers, Block, Delete, All (+ Open) |
+| Chat messages | Copy, Forward, Delete, All (+ Actions for details) |
+
+`CANCEL` or the back gesture leaves the selection; destructive actions confirm
+first and name how many items they will remove.
+
+## The contact screen
+
+Beyond call and text:
+
+* **Photo** — tap the avatar to pick an image. It is cropped square, scaled and
+  written into the contact's own photo row in the phone's provider. Nothing is
+  copied into Trinity. `Remove photo` puts the contact back.
+* **Availability** — WhatsApp publishes its identities into the contacts provider
+  (raw contacts under the `com.whatsapp` account, JID in `SYNC1`), so the screen can
+  say **AVAILABLE** for a person who is actually on WhatsApp instead of guessing
+  from the installed app. Numbers on WhatsApp are marked `WA`.
+* **WhatsApp** — chat and WhatsApp voice actions, plus the WhatsApp mark on every
+  call-log row.
+* **Call history for this contact** — last calls with direction, duration and
+  timestamp, each opening the call-log detail screen.
+* **Google contacts sync** — read from the provider's accounts and sync flags
+  (`ON`, `OFF`, `AUTO-SYNC OFF`, `NO GOOGLE ACCOUNT`); tapping opens the system sync
+  settings.
 
 ## Blocking semantics
 
@@ -45,74 +100,71 @@ that caught the message.
 ## Layout
 
 ```
-design/
-  build-design.js     source of truth for the canvas — edit this, never the .op
-  trinity.op          generated OpenPencil 0.8.5 document (9 frames)
-  shots/*.png         one exported PNG per frame, all reviewed
 app/src/main/java/com/sarim/trinity/
   MainActivity.kt     route state, permission gate, tab bar
-  data/               BlockStore + BlockMatcher, repositories, ContactWriter, QuarantineStore
-  sms/Sms.kt          SMS_DELIVER / WAP_PUSH receivers, sender, contact-name cache
-  ui/theme/Theme.kt   Palette + TrinityTheme (Material3 stable, not Expressive)
-  ui/components/      MonoLabel, Hairline, Avatar, ScreenHeader, Pill, RuleChip, IconAction
-  ui/screens/         Messages, Thread, Calls, Contacts, Person, Blocking, Held, Dialpad,
-                      InCall, NewContact, Settings
+  call/               InCallService, in-call screen, call notification + ring
+  data/               BlockStore + BlockMatcher, repositories, ContactWriter,
+                      ContactChannels (WhatsApp + sync), ContactPhotos,
+                      QuarantineStore, ThreadPrefs
+  sms/                SMS_DELIVER / WAP_PUSH receivers, sender, notifier
+  ui/theme/Theme.kt   one Expressive scheme (light/dark) + Palette roles
+  ui/components/      glassBlock, PersonAvatar, Selection (long-press picking),
+                      MonoLabel, Hairline, InkSheet, BottomAction, ScreenHeader
+  ui/screens/         Messages, Thread, Calls, Contacts, Person, Blocking, Held,
+                      Dialpad, NewContact, Settings
 ```
 
 Kotlin + Jetpack Compose, single `:app` module, minSdk 26 / compile+target 34.
 No Room, no DataStore, no navigation library: `SharedPreferences` + `org.json` and a
-hand-rolled `Route` sealed interface.
+hand-rolled `Route` sealed interface. Photos are decoded with `BitmapFactory`; there
+is no image-loading dependency.
 
-## Screens (design frames ↔ app)
+## Screens
 
-| Frame | App screen |
+| Screen | File |
 | --- | --- |
-| 01 Messages | `MessagesScreen` |
-| 02 Thread | `ThreadScreen` |
-| 03 Calls | `CallsScreen` |
-| 04 Contacts | `ContactsScreen` (+ `PersonScreen` detail) |
-| 05 Blocking | `BlockingScreen` |
-| 06 Dial pad | `DialpadScreen` |
-| 07 Settings | `SettingsScreen` |
-| 08 In call | `InCallScreen` |
-| 09 New contact | `NewContactScreen` (also "save this number" from the dial pad) |
+| Calls | `CallsScreen` |
+| Messages | `MessagesScreen` |
+| Conversation | `ThreadScreen` |
+| Contacts | `ContactsScreen` |
+| Contact detail | `PersonScreen` |
+| Blocking / Held | `BlockingScreen`, `HeldScreen` |
+| Dial pad | `DialpadScreen` |
+| In call | `InCallActivity` |
+| New contact / message | `NewContactScreen`, `NewMessageScreen` |
+| Settings | `SettingsScreen` |
 
 ## Build the APK
 
 JDK 21 is required (system Java 25 will not work with Gradle 8.7); `gradle.properties`
-already pins it. `local.properties` points at the SDK.
+already pins it. `local.properties` points at the SDK. There is no Gradle wrapper
+checked in yet, so point at a Gradle 8.7 install:
 
 ```bash
 # from the repo root
 "$HOME/.gradle/wrapper/dists/gradle-8.7-bin/*/gradle-8.7/bin/gradle" --no-daemon assembleDebug
 # -> app/build/outputs/apk/debug/app-debug.apk
+adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-## Rebuild and view the design
+## Design canvas is out of date
 
-`op open_document` does **not** reload a changed file. The canvas must be relaunched:
-
-```bash
-node design/build-design.js                     # rewrites design/trinity.op
-taskkill //F //IM openpencil-desktop.exe
-"/c/Users/Sarim/Programs/OpenPencil/openpencil-desktop.exe" "C:/Users/Sarim/repos/trinity/design/trinity.op" &
-"/c/Users/Sarim/.openpencil/bin/op.exe" export-frames --output-dir "C:/Users/Sarim/repos/trinity/design/shots" --format png
-```
-
-Generator gotchas: every node needs an `id`; alignment values are
-`start|center|end|space_between|space_around`; padding on a bare text node renders
-shifted — wrap the label in a row or frame instead.
+`design/build-design.js`, `design/trinity.op` and `design/shots/*.png` are the
+original paper-and-ink mockups, kept for history. The app has moved to the glass
+Expressive look described above, so those frames no longer match. The source of
+truth for the look is `ui/theme/Theme.kt` and `glassBlock` in `ui/components/Common.kt`.
 
 ## Status
 
-Verified: `assembleDebug` succeeds and the 9 design frames export and render correctly.
+Running on the author's Xiaomi `spes` (Android 16). Exercised on the device so far:
+the three tabs, contact photos (attach, display, remove), WhatsApp availability and
+chat hand-off, the Google sync indicator, and the long-press selection actions.
 
-Not verified: nothing has run on a device or emulator — no system image is installed
-and no phone was connected, so the app is **compile-checked only**. In particular the
-SMS role handoff, the `SMS_DELIVER` quarantine path, and `ContactWriter`'s provider
-insert are written but untested. `InCallScreen` is Trinity's own in-call surface for
-calls Trinity placed; audio still belongs to the system telephony stack, and Trinity
-does not hold `ROLE_DIALER`/`InCallService`.
+Implemented and building, but not yet through a full pass on this phone: the
+incoming-call notification and live in-call card (counter, mute, speaker, end call),
+the SMS role handoff, and the `SMS_DELIVER` quarantine path. When WhatsApp's contact
+sync is off the availability row honestly reads `NO RECORD` rather than assuming the
+number is not on WhatsApp.
 
 ## Licence
 
