@@ -2,6 +2,7 @@ package com.sarim.trinity.ui.components
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.draw.drawWithCache
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -26,10 +27,16 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -38,8 +45,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.sarim.trinity.data.ContactPhotos
 import com.sarim.trinity.data.SimCard
 import com.sarim.trinity.ui.theme.Palette
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /** Small tracked-out mono label — the app's connective tissue. */
 @Composable
@@ -166,6 +176,37 @@ fun Avatar(initials: String, filled: Boolean, size: Int = 40) {
             color = foreground,
             fontWeight = FontWeight.SemiBold,
             fontSize = (size * 0.32f).sp,
+        )
+    }
+}
+
+/** A contact's own photo when the provider has one, initials otherwise. */
+@Composable
+fun PersonAvatar(
+    initials: String,
+    photoUri: String?,
+    filled: Boolean = false,
+    size: Int = 40,
+) {
+    val context = LocalContext.current
+    val loaded by produceState<ImageBitmap?>(initialValue = null, photoUri) {
+        value = photoUri?.let { uri ->
+            withContext(Dispatchers.IO) {
+                ContactPhotos.load(context, uri, size * 3)?.asImageBitmap()
+            }
+        }
+    }
+    val photo = loaded
+    if (photo == null) {
+        Avatar(initials, filled, size)
+    } else {
+        Image(
+            bitmap = photo,
+            contentDescription = null,
+            modifier = Modifier
+                .size(size.dp)
+                .clip(CircleShape),
+            contentScale = ContentScale.Crop,
         )
     }
 }

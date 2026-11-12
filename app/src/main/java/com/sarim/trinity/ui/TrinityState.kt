@@ -19,6 +19,7 @@ import com.sarim.trinity.data.BlockMatcher
 import com.sarim.trinity.data.BlockStore
 import com.sarim.trinity.data.CallEntry
 import com.sarim.trinity.data.CallsRepository
+import com.sarim.trinity.data.ContactPhotos
 import com.sarim.trinity.data.ContactWriter
 import com.sarim.trinity.data.ContactsRepository
 import com.sarim.trinity.data.Conversation
@@ -397,12 +398,81 @@ class TrinityState(private val context: Context, private val scope: CoroutineSco
     fun callCountFor(number: String): Int =
         calls.count { BlockMatcher.sameNumber(it.number, number) }
 
+    /** That contact's own slice of the call log, newest first. */
+    fun callsFor(number: String): List<CallEntry> =
+        calls.filter { BlockMatcher.sameNumber(it.number, number) }
+
+    /** The SMS thread with this number, when there is one. */
+    fun conversationForNumber(number: String): Conversation? =
+        conversations.firstOrNull { BlockMatcher.sameNumber(it.address, number) }
+
+    fun setContactPhoto(person: Person, source: Uri, onDone: (Boolean) -> Unit = {}) {
+        scope.launch {
+            val ok = withContext(Dispatchers.IO) { ContactPhotos.set(context, person, source) }
+            refresh()
+            onDone(ok)
+        }
+    }
+
+    fun removeContactPhoto(person: Person, onDone: (Boolean) -> Unit = {}) {
+        scope.launch {
+            val ok = withContext(Dispatchers.IO) { ContactPhotos.remove(context, person) }
+            refresh()
+            onDone(ok)
+        }
+    }
+
     fun deleteThread(threadId: Long, onDone: () -> Unit = {}) {
         scope.launch {
             messagesRepo.deleteThread(threadId)
             if (openThreadId == threadId) closeThread()
             refresh()
             onDone()
+        }
+    }
+
+    /** Several conversations at once, from a long-press selection. */
+    fun deleteThreads(threadIds: Collection<Long>, onDone: () -> Unit = {}) {
+        if (threadIds.isEmpty()) return
+        scope.launch {
+            threadIds.forEach { id ->
+                messagesRepo.deleteThread(id)
+                MessageNotifier.cancel(context, id)
+                if (openThreadId == id) closeThread()
+            }
+            refresh()
+            onDone()
+        }
+    }
+
+    fun markThreadsRead(threadIds: Collection<Long>) {
+        if (threadIds.isEmpty()) return
+        scope.launch {
+            val now = System.currentTimeMillis()
+            threadIds.forEach { id ->
+                messagesRepo.markThreadRead(id)
+                threadPrefs.markSeen(id, now)
+                MessageNotifier.cancel(context, id)
+            }
+            refresh()
+        }
+    }
+
+    fun setThreadsMuted(threadIds: Collection<Long>, muted: Boolean) {
+        if (threadIds.isEmpty()) return
+        threadIds.forEach { threadPrefs.setMuted(it, muted) }
+        refresh()
+    }
+
+    /** Deletes picked messages; rows still on their way out are dropped instead. */
+    fun deleteMessages(ids: Collection<Long>) {
+        val unsent = ids.filter { it < 0 }.map { -it }.toSet()
+        if (unsent.isNotEmpty()) pending = pending.filterNot { it.localId in unsent }
+        val stored = ids.filter { it > 0 }
+        if (stored.isEmpty()) return
+        scope.launch {
+            stored.forEach { messagesRepo.deleteMessage(it) }
+            refresh()
         }
     }
 
@@ -608,6 +678,26 @@ class TrinityState(private val context: Context, private val scope: CoroutineSco
         scope.launch {
             callsRepo.delete(id)
             refresh()
+        }
+    }
+
+    fun deleteCalls(ids: Collection<Long>, onDone: () -> Unit = {}) {
+        if (ids.isEmpty()) return
+        scope.launch {
+            ids.forEach { callsRepo.delete(it) }
+            refresh()
+            onDone()
+        }
+    }
+
+    fun deleteContacts(people: Collection<Person>, onDone: () -> Unit = {}) {
+        if (people.isEmpty()) return
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                people.forEach { ContactWriter.delete(context, it.id) }
+            }
+            refresh()
+            onDone()
         }
     }
 

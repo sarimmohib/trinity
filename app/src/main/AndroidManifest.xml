@@ -23,6 +23,14 @@
          live call card and its controls cannot be killed out from under a call. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" />
+    <!-- The contact screen reports whether the phone's contacts are syncing. -->
+    <uses-permission android:name="android.permission.READ_SYNC_SETTINGS" />
+
+    <!-- The contact screen can hand a number to WhatsApp; package visibility makes
+         it possible to ask whether WhatsApp is installed at all. -->
+    <queries>
+        <package android:name="com.whatsapp" />
+    </queries>
 
     <application
         android:allowBackup="false"

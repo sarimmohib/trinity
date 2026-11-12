@@ -64,6 +64,10 @@ import com.sarim.trinity.ui.components.Avatar
 import com.sarim.trinity.ui.components.Hairline
 import com.sarim.trinity.ui.components.InkSheet
 import com.sarim.trinity.ui.components.MonoLabel
+import com.sarim.trinity.ui.components.Selection
+import com.sarim.trinity.ui.components.SelectionAction
+import com.sarim.trinity.ui.components.SelectionBar
+import com.sarim.trinity.ui.components.SelectionMark
 import com.sarim.trinity.ui.components.SheetAction
 import com.sarim.trinity.ui.dayKey
 import com.sarim.trinity.ui.dayLabel
@@ -100,10 +104,18 @@ fun ThreadScreen(
     var messageMenu by remember { mutableStateOf<Message?>(null) }
     var infoFor by remember { mutableStateOf<Message?>(null) }
     var confirmDeleteThread by remember { mutableStateOf(false) }
+    var confirmBulkDelete by remember { mutableStateOf(false) }
     val clipboard = LocalClipboardManager.current
+
+    // Long press a bubble to start picking texts; a tap then adds or drops.
+    val selection = remember(conversation.threadId) { Selection<Message> { it.id } }
+    val picked = state.threadMessages(conversation.address).filter { selection.contains(it) }
 
     // Opening the thread marks it read and clears its notification.
     LaunchedEffect(conversation.threadId) { state.openThread(conversation) }
+
+    // Back leaves the selection before it leaves the conversation.
+    androidx.activity.compose.BackHandler(enabled = selection.active) { selection.clear() }
 
     val all = state.threadMessages(conversation.address)
     val shown = if (query.isBlank()) {
@@ -240,7 +252,12 @@ fun ThreadScreen(
                                     MessageBubble(
                                         message = message,
                                         query = query,
-                                        onLongPress = { messageMenu = message },
+                                        selecting = selection.active,
+                                        selected = selection.contains(message),
+                                        onClick = {
+                                            if (selection.active) selection.toggle(message)
+                                        },
+                                        onLongPress = { selection.start(message) },
                                     )
                                     if (message.state == MessageState.FAILED) {
                                         FailedNote(
@@ -287,31 +304,63 @@ fun ThreadScreen(
             }
         }
 
-        Composer(
-            conversation = conversation,
-            onCall = { state.call(conversation.address, conversation.name) },
-            simLabel = state.sendSimLabel(),
-            onSimClick = { simSheet = true },
-            draft = draft,
-            onDraftChange = {
-                draft = it
-                state.setDraft(conversation.threadId, it)
-            },
-            onSend = {
-                val text = draft.trim()
-                if (text.isNotBlank()) {
-                    fun deliver(subscriptionId: Int? = state.selectedSubscription) {
-                        state.sendMessage(conversation.address, text, subscriptionId)
-                        draft = ""
-                        state.setDraft(conversation.threadId, "")
-                        stickToBottom = true
+        // The composer steps aside while texts are picked: the bar is the only
+        // thing that can act then, and it stays under the thumb.
+        if (selection.active) {
+            SelectionBar(
+                count = picked.size,
+                actions = buildList {
+                    if (picked.size == 1) {
+                        add(SelectionAction("Actions") { messageMenu = picked.first() })
                     }
-                    // "Ask every time" means exactly that: the line is chosen first.
-                    if (state.askEachTime && state.simCards.isNotEmpty()) askSend = text
-                    else deliver()
-                }
-            },
-        )
+                    add(
+                        SelectionAction("Copy") {
+                            clipboard.setText(
+                                AnnotatedString(picked.joinToString("\n\n") { it.body }),
+                            )
+                            selection.clear()
+                        },
+                    )
+                    add(
+                        SelectionAction("Forward") {
+                            onForward(picked.joinToString("\n\n") { it.body })
+                            selection.clear()
+                        },
+                    )
+                    add(SelectionAction("Delete") { confirmBulkDelete = true })
+                    if (picked.size < shown.size) {
+                        add(SelectionAction("All") { selection.pickAll(shown) })
+                    }
+                },
+                onClear = { selection.clear() },
+            )
+        } else {
+            Composer(
+                conversation = conversation,
+                onCall = { state.call(conversation.address, conversation.name) },
+                simLabel = state.sendSimLabel(),
+                onSimClick = { simSheet = true },
+                draft = draft,
+                onDraftChange = {
+                    draft = it
+                    state.setDraft(conversation.threadId, it)
+                },
+                onSend = {
+                    val text = draft.trim()
+                    if (text.isNotBlank()) {
+                        fun deliver(subscriptionId: Int? = state.selectedSubscription) {
+                            state.sendMessage(conversation.address, text, subscriptionId)
+                            draft = ""
+                            state.setDraft(conversation.threadId, "")
+                            stickToBottom = true
+                        }
+                        // "Ask every time" means exactly that: the line is chosen first.
+                        if (state.askEachTime && state.simCards.isNotEmpty()) askSend = text
+                        else deliver()
+                    }
+                },
+            )
+        }
     }
 
     askSend?.let { text ->
@@ -390,6 +439,22 @@ fun ThreadScreen(
                 }
             },
             onDismiss = { messageMenu = null },
+        )
+    }
+
+    if (confirmBulkDelete && picked.isNotEmpty()) {
+        val doomed = picked
+        InkSheet(
+            title = if (doomed.size == 1) "DELETE MESSAGE" else "DELETE ${doomed.size} MESSAGES",
+            actions = listOf(
+                SheetAction("Delete from this conversation", "CANNOT BE UNDONE") {
+                    confirmBulkDelete = false
+                    state.deleteMessages(doomed.map { it.id })
+                    selection.clear()
+                },
+                SheetAction("Keep them") { },
+            ),
+            onDismiss = { confirmBulkDelete = false },
         )
     }
 
@@ -513,11 +578,24 @@ private fun DayRule(label: String) {
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun MessageBubble(message: Message, query: String, onLongPress: () -> Unit) {
+private fun MessageBubble(
+    message: Message,
+    query: String,
+    selecting: Boolean,
+    selected: Boolean,
+    onClick: () -> Unit,
+    onLongPress: () -> Unit,
+) {
+    val shape = RoundedCornerShape(12.dp)
     Row(
         Modifier.fillMaxWidth(),
         horizontalArrangement = if (message.outgoing) Arrangement.End else Arrangement.Start,
+        verticalAlignment = Alignment.CenterVertically,
     ) {
+        if (selecting && !message.outgoing) {
+            SelectionMark(selected)
+            Spacer(Modifier.width(8.dp))
+        }
         Column(
             Modifier
                 .width(272.dp)
@@ -530,7 +608,18 @@ private fun MessageBubble(message: Message, query: String, onLongPress: () -> Un
                     if (message.outgoing) Palette.Ink else Palette.Line,
                     RoundedCornerShape(12.dp),
                 )
-                .combinedClickable(onClick = {}, onLongClick = onLongPress)
+                .then(
+                    if (selected) {
+                        Modifier.border(
+                            2.dp,
+                            androidx.compose.material3.MaterialTheme.colorScheme.primary,
+                            shape,
+                        )
+                    } else {
+                        Modifier
+                    },
+                )
+                .combinedClickable(onClick = onClick, onLongClick = onLongPress)
                 .padding(horizontal = 13.dp, vertical = 10.dp),
         ) {
             Text(
@@ -553,6 +642,10 @@ private fun MessageBubble(message: Message, query: String, onLongPress: () -> Un
                 fontSize = 8.sp,
                 color = if (message.outgoing) Palette.Wash else Palette.Faint,
             )
+        }
+        if (selecting && message.outgoing) {
+            Spacer(Modifier.width(8.dp))
+            SelectionMark(selected)
         }
     }
 }

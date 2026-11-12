@@ -269,6 +269,8 @@ private fun TrinityApp(
                     onBack = { go(Route.Tab(2)) },
                     onEdit = { go(Route.NewContact(editing = it)) },
                     onMessage = { go(Route.NewMessage(to = it)) },
+                    onOpenThread = { go(Route.Thread(it)) },
+                    onOpenCall = { go(Route.CallDetail(it)) },
                     onOpenCalls = { go(Route.Tab(0)) },
                 )
 

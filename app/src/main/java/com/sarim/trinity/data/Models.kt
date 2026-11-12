@@ -11,6 +11,8 @@ data class Person(
     val rawContactId: Long = -1L,
     val numbers: List<PhoneEntry> = emptyList(),
     val emails: List<String> = emptyList(),
+    /** The provider's photo for this contact, when one is set. */
+    val photoUri: String? = null,
 ) {
     val initials: String
         get() = name.trim().split(" ", "  ")

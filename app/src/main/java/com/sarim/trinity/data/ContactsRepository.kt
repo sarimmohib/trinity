@@ -23,6 +23,7 @@ class ContactsRepository(private val context: Context) {
         val names = LinkedHashMap<Long, String>()
         val numbers = LinkedHashMap<Long, MutableList<PhoneEntry>>()
         val rawIds = HashMap<Long, Long>()
+        val photos = HashMap<Long, String>()
 
         val phoneProjection = arrayOf(
             ContactsContract.CommonDataKinds.Phone.CONTACT_ID,
@@ -30,6 +31,7 @@ class ContactsRepository(private val context: Context) {
             ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
             ContactsContract.CommonDataKinds.Phone.NUMBER,
             ContactsContract.CommonDataKinds.Phone.TYPE,
+            ContactsContract.CommonDataKinds.Phone.PHOTO_URI,
         )
         runCatching {
             context.contentResolver.query(
@@ -48,6 +50,7 @@ class ContactsRepository(private val context: Context) {
                     val label = name ?: number
                     if (!names.containsKey(contactId)) names[contactId] = label
                     rawIds.putIfAbsent(contactId, rawId)
+                    cursor.getString(5)?.let { photos.putIfAbsent(contactId, it) }
                     val entry = PhoneEntry(number.trim(), phoneLabel(cursor.getInt(4)))
                     val bucket = numbers.getOrPut(contactId) { ArrayList() }
                     if (bucket.none { digits(it.number) == digits(number) }) bucket += entry
@@ -65,6 +68,7 @@ class ContactsRepository(private val context: Context) {
                 rawContactId = rawIds[id] ?: -1L,
                 numbers = list,
                 emails = emails[id].orEmpty(),
+                photoUri = photos[id],
             )
         }
     }

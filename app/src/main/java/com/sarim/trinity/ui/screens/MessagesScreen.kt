@@ -56,6 +56,10 @@ import com.sarim.trinity.ui.components.Hairline
 import com.sarim.trinity.ui.components.glassBlock
 import com.sarim.trinity.ui.components.InkSheet
 import com.sarim.trinity.ui.components.MonoLabel
+import com.sarim.trinity.ui.components.Selection
+import com.sarim.trinity.ui.components.SelectionAction
+import com.sarim.trinity.ui.components.SelectionBar
+import com.sarim.trinity.ui.components.SelectionMark
 import com.sarim.trinity.ui.components.SheetAction
 import com.sarim.trinity.ui.components.uiLabel
 import com.sarim.trinity.ui.relativeStamp
@@ -85,12 +89,20 @@ fun MessagesScreen(
     val clipboard = LocalClipboardManager.current
     val context = androidx.compose.ui.platform.LocalContext.current
 
+    // Long press picks rows; tapping then adds or drops them instead of opening.
+    val selection = remember { Selection<Conversation> { it.threadId } }
+    val picked = visible.filter { selection.contains(it) }
+    var confirmBulkDelete by remember { mutableStateOf(false) }
+
     // The banner walks every route to the SMS role, and lands on the default-apps
     // page when the device's own role dialog closes itself on arrival.
     val askForSmsRole = com.sarim.trinity.ui.components.rememberRoleAsker(state) { _ -> }
 
     // Coming back to the tab always re-reads the provider: new texts, new counts.
     LaunchedEffect(Unit) { state.refresh() }
+
+    // Back drops the selection before it leaves the tab.
+    androidx.activity.compose.BackHandler(enabled = selection.active) { selection.clear() }
 
     Column(Modifier.fillMaxSize()) {
         MessagesHeader(
@@ -166,13 +178,21 @@ fun MessagesScreen(
 
                 else -> LazyColumn(
                     Modifier.fillMaxSize(),
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 92.dp),
+                    // Room for the bar while rows are picked, for the button otherwise.
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                        bottom = if (selection.active) 128.dp else 92.dp,
+                    ),
                 ) {
                     items(visible, key = { it.threadId }) { conversation ->
                         SwipeableConversationRow(
                             conversation = conversation,
-                            onOpen = { onOpenThread(conversation) },
-                            onLongPress = { menuFor = conversation },
+                            selecting = selection.active,
+                            selected = selection.contains(conversation),
+                            onOpen = {
+                                if (selection.active) selection.toggle(conversation)
+                                else onOpenThread(conversation)
+                            },
+                            onLongPress = { selection.start(conversation) },
                             onSwipeDelete = { confirmDelete = conversation },
                         )
                         if (!Palette.isExpressive) Hairline()
@@ -181,13 +201,44 @@ fun MessagesScreen(
             }
 
             // It floats over the list: rows keep scrolling under the glass, so
-            // nothing sits on a solid strip of its own.
-            BottomAction(
-                label = "NEW MESSAGE",
-                icon = Icons.Outlined.Add,
-                onClick = onNewMessage,
-                modifier = Modifier.align(Alignment.BottomEnd),
-            )
+            // nothing sits on a solid strip of its own. While rows are picked the
+            // bar above takes its place, with what can be done to them.
+            if (selection.active) {
+                SelectionBar(
+                    count = picked.size,
+                    actions = buildList {
+                        if (picked.size == 1) {
+                            add(SelectionAction("Actions") { menuFor = picked.first() })
+                        }
+                        add(
+                            SelectionAction("Read") {
+                                state.markThreadsRead(picked.map { it.threadId })
+                                selection.clear()
+                            },
+                        )
+                        val anyUnmuted = picked.any { !it.muted }
+                        add(
+                            SelectionAction(if (anyUnmuted) "Mute" else "Unmute") {
+                                state.setThreadsMuted(picked.map { it.threadId }, anyUnmuted)
+                                selection.clear()
+                            },
+                        )
+                        add(SelectionAction("Delete") { confirmBulkDelete = true })
+                        if (picked.size < visible.size) {
+                            add(SelectionAction("All") { selection.pickAll(visible) })
+                        }
+                    },
+                    onClear = { selection.clear() },
+                    modifier = Modifier.align(Alignment.BottomCenter),
+                )
+            } else {
+                BottomAction(
+                    label = "NEW MESSAGE",
+                    icon = Icons.Outlined.Add,
+                    onClick = onNewMessage,
+                    modifier = Modifier.align(Alignment.BottomEnd),
+                )
+            }
         }
     }
 
@@ -232,6 +283,21 @@ fun MessagesScreen(
                 SheetAction("Keep it") { },
             ),
             onDismiss = { confirmDelete = null },
+        )
+    }
+
+    if (confirmBulkDelete && picked.isNotEmpty()) {
+        val threads = picked.map { it.threadId }
+        InkSheet(
+            title = if (threads.size == 1) "DELETE CONVERSATION" else "DELETE ${threads.size} CONVERSATIONS",
+            actions = listOf(
+                SheetAction("Delete every message", "CANNOT BE UNDONE") {
+                    confirmBulkDelete = false
+                    state.deleteThreads(threads) { selection.clear() }
+                },
+                SheetAction("Keep them") { },
+            ),
+            onDismiss = { confirmBulkDelete = false },
         )
     }
 }
@@ -309,10 +375,18 @@ private fun BoxAction(label: String, onClick: () -> Unit, filled: Boolean = fals
 @Composable
 private fun SwipeableConversationRow(
     conversation: Conversation,
+    selecting: Boolean,
+    selected: Boolean,
     onOpen: () -> Unit,
     onLongPress: () -> Unit,
     onSwipeDelete: () -> Unit,
 ) {
+    // While rows are being picked a sideways drag would fight the selection, so
+    // the row is drawn without the swipe wrapper for the duration.
+    if (selecting) {
+        ConversationRow(conversation, selected, true, onOpen, onLongPress)
+        return
+    }
     val dismissState = rememberSwipeToDismissBoxState(
         confirmValueChange = { value ->
             if (value == SwipeToDismissBoxValue.EndToStart) {
@@ -343,7 +417,7 @@ private fun SwipeableConversationRow(
             }
         },
     ) {
-        ConversationRow(conversation, onOpen, onLongPress)
+        ConversationRow(conversation, false, false, onOpen, onLongPress)
     }
 }
 
@@ -351,6 +425,8 @@ private fun SwipeableConversationRow(
 @Composable
 private fun ConversationRow(
     conversation: Conversation,
+    selected: Boolean,
+    selecting: Boolean,
     onClick: () -> Unit,
     onLongPress: () -> Unit,
 ) {
@@ -368,7 +444,7 @@ private fun ConversationRow(
                     Modifier
                         .padding(horizontal = 10.dp, vertical = 4.dp)
                         .height(72.dp)
-                        .glassBlock(tint, 22.dp)
+                        .glassBlock(tint, 22.dp, if (selected) 2.4f else 1f)
                 } else {
                     Modifier.height(78.dp).background(Palette.Paper)
                 },
@@ -435,6 +511,10 @@ private fun ConversationRow(
                     )
                 }
             }
+        }
+        if (selecting) {
+            Spacer(Modifier.width(10.dp))
+            SelectionMark(selected)
         }
     }
 }
