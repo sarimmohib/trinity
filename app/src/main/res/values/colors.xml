@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Achromatic only: no purple, neon, deep blue, red, green or orange,
+         and no gradients anywhere in the app. -->
+    <color name="bone">#F1EDE4</color>
+    <color name="paper">#FAF8F2</color>
+    <color name="ink">#17160F</color>
+</resources>
