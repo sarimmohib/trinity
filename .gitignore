@@ -8,3 +8,6 @@ local.properties
 /build/
 *.apk
 /.kotlin/
+
+# Earlier paper-era mockups stay local; the repo carries the app only.
+/design/

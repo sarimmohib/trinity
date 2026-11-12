@@ -10,12 +10,20 @@ Calls  ·  Messages  ·  Contacts        one surface, three tabs
 > **Work in progress.** Trinity is being used day to day by its author on a Xiaomi
 > `spes` running Android 16, and is not released. Expect rough edges.
 
-## The look — translucent Expressive glass
+## The look — glass, shaped and coloured by Material Expressive
 
-Every tappable thing is a rounded, faintly translucent block with a colour of its
-own that lets the page show through it. Nothing sits on a solid slab, and **there
-are no gradients anywhere** — the frosted quality comes from texture, not gloss:
-a 1px diagonal weave every 7dp under a white hairline edge.
+One look only, and it is a hybrid of two ingredients:
+
+* **Glass** supplies the surface — a rounded, faintly translucent block with a
+  colour of its own that lets the page show through. Nothing sits on a solid slab
+  and **there are no gradients anywhere**; the frosted quality is texture, not
+  gloss: a 1px diagonal weave every 7dp under a white hairline edge.
+* **Material 3 Expressive** supplies the shapes, the colour roles and the type —
+  rounder corners, a green/blue/teal scheme, per-person tints.
+
+There is no paper theme, no plain Material theme and no wallpaper-derived palette
+in the app. Glass without Expressive would be grey slabs; Expressive without glass
+would be opaque tonal surfaces. Trinity is deliberately the two together.
 
 The recipe lives in one place, `Modifier.glassBlock(tint, radius, strength)`
 (`ui/components/Common.kt`):
@@ -147,12 +155,11 @@ checked in yet, so point at a Gradle 8.7 install:
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-## Design canvas is out of date
+## Where the look lives
 
-`design/build-design.js`, `design/trinity.op` and `design/shots/*.png` are the
-original paper-and-ink mockups, kept for history. The app has moved to the glass
-Expressive look described above, so those frames no longer match. The source of
-truth for the look is `ui/theme/Theme.kt` and `glassBlock` in `ui/components/Common.kt`.
+The look is code, not a mockup: `ui/theme/Theme.kt` holds the single Expressive
+scheme (light and dark) and the colour roles, and `glassBlock` in
+`ui/components/Common.kt` holds the glass recipe. Change it there.
 
 ## Status
 
