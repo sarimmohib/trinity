@@ -6,6 +6,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.provider.ContactsContract
+import android.util.LruCache
 import java.io.ByteArrayOutputStream
 
 /**
@@ -15,6 +16,24 @@ import java.io.ByteArrayOutputStream
 object ContactPhotos {
 
     private const val MAX_PX = 512
+
+    /** Decoded row and header photos, so scrolling a list does not decode them again. */
+    private val cache = object : LruCache<String, Bitmap>(8 * 1024 * 1024) {
+        override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount
+    }
+
+    private fun cacheKey(uri: String, maxPx: Int) = "$uri#$maxPx"
+
+    /** The photo decoded earlier for this size, if it is still held. */
+    fun cached(uri: String?, maxPx: Int): Bitmap? =
+        if (uri.isNullOrBlank()) null else cache.get(cacheKey(uri, maxPx))
+
+    /** [load], keeping the result for the next time the same photo is asked for. */
+    fun loadCached(context: Context, uri: String, maxPx: Int): Bitmap? =
+        cached(uri, maxPx) ?: load(context, uri, maxPx)?.also { cache.put(cacheKey(uri, maxPx), it) }
+
+    /** Photos can change under the same uri; whatever re-reads contacts calls this. */
+    fun clearCache() = cache.evictAll()
 
     /** Decodes the stored photo small enough for a header or a list row. */
     fun load(context: Context, uri: String?, maxPx: Int = 160): Bitmap? {
@@ -61,6 +80,7 @@ object ContactPhotos {
                 .build(),
         )
         context.contentResolver.applyBatch(ContactsContract.AUTHORITY, ops)
+        clearCache()
         true
     }.getOrDefault(false)
 
@@ -68,7 +88,7 @@ object ContactPhotos {
     fun remove(context: Context, person: Person): Boolean = runCatching {
         val rawId = ContactWriter.rawContactId(context, person)
         if (rawId <= 0L) return false
-        context.contentResolver.delete(
+        val removed = context.contentResolver.delete(
             ContactsContract.Data.CONTENT_URI,
             "${ContactsContract.Data.RAW_CONTACT_ID} = ? AND ${ContactsContract.Data.MIMETYPE} = ?",
             arrayOf(
@@ -76,6 +96,8 @@ object ContactPhotos {
                 ContactsContract.CommonDataKinds.Photo.CONTENT_ITEM_TYPE,
             ),
         ) > 0
+        clearCache()
+        removed
     }.getOrDefault(false)
 
     private fun sampleSize(width: Int, height: Int, maxPx: Int): Int {

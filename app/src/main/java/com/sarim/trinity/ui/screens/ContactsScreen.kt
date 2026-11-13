@@ -82,9 +82,14 @@ fun ContactsScreen(
     // A contact added anywhere else must be here when the tab comes back.
     LaunchedEffect(Unit) { state.refresh() }
 
-    val blockedCount = state.contacts.count {
-        BlockMatcher.match(it.name, it.number, null, rules) != null
+    // Matched once per contact list and rule set, instead of for the whole book on
+    // every recomposition and again for each row as it scrolls into view.
+    val blockedIds = remember(state.contacts, rules) {
+        state.contacts
+            .filter { BlockMatcher.match(it.name, it.number, null, rules) != null }
+            .mapTo(HashSet()) { it.id }
     }
+    val blockedCount = blockedIds.size
     val digits = query.filter { it.isDigit() }
     val needle = query.trim()
     val filtered = state.contacts.filter { person ->
@@ -194,12 +199,11 @@ fun ContactsScreen(
                         ),
                     ) {
                         sections.forEach { (letter, people) ->
-                            stickyHeader(key = "header-$letter") {
+                            stickyHeader(key = "header-$letter", contentType = "header") {
                                 SectionHeader(letter, people.size)
                             }
-                            items(people, key = { it.id }) { person ->
-                                val blocked =
-                                    BlockMatcher.match(person.name, person.number, null, rules) != null
+                            items(people, key = { it.id }, contentType = { "person" }) { person ->
+                                val blocked = person.id in blockedIds
                                 PersonRow(
                                     person = person,
                                     blocked = blocked,

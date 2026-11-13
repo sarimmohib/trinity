@@ -29,12 +29,19 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Canvas
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.ImageShader
+import androidx.compose.ui.graphics.Paint
+import androidx.compose.ui.graphics.ShaderBrush
+import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -50,6 +57,7 @@ import com.sarim.trinity.data.SimCard
 import com.sarim.trinity.ui.theme.Palette
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlin.math.roundToInt
 
 /** Small tracked-out mono label — the app's connective tissue. */
 @Composable
@@ -98,6 +106,31 @@ fun Hairline(modifier: Modifier = Modifier) {
     )
 }
 
+private val weaveBrushes = HashMap<Long, ShaderBrush>()
+
+/**
+ * The weave as one small repeating tile per spacing and colour. A block then costs
+ * a single textured fill, where drawing each line separately meant sixty-odd
+ * anti-aliased strokes per row on every frame of a scroll.
+ */
+private fun weaveBrush(stepPx: Int, color: Color): ShaderBrush {
+    val key = (stepPx.toLong() shl 32) or (color.toArgb().toLong() and 0xFFFFFFFFL)
+    return weaveBrushes.getOrPut(key) {
+        val tile = ImageBitmap(stepPx, stepPx)
+        val paint = Paint()
+        paint.color = color
+        paint.strokeWidth = 1f
+        val canvas = Canvas(tile)
+        val step = stepPx.toFloat()
+        // The diagonal through the tile plus its two neighbours, so the corners
+        // meet when the tile repeats.
+        for (k in -1..1) {
+            canvas.drawLine(Offset(k * step, step), Offset((k + 1) * step, 0f), paint)
+        }
+        ShaderBrush(ImageShader(tile, TileMode.Repeated, TileMode.Repeated))
+    }
+}
+
 /**
  * The Expressive surface: one rounded, faintly translucent block per thing you can
  * press, with a lit edge and a fine diagonal weave. Glass by texture, not gradient.
@@ -119,19 +152,8 @@ fun Modifier.glassBlock(
                 // Frosted, not glossy: a diagonal weave at a hair's width apart.
                 // Texture only — no gradient, which the look does not allow.
                 Modifier.drawWithCache {
-                    val step = 7.dp.toPx()
-                    onDrawBehind {
-                        var x = -size.height
-                        while (x < size.width) {
-                            drawLine(
-                                weave,
-                                Offset(x, size.height),
-                                Offset(x + size.height, 0f),
-                                strokeWidth = 1f,
-                            )
-                            x += step
-                        }
-                    }
+                    val brush = weaveBrush(7.dp.toPx().roundToInt().coerceAtLeast(2), weave)
+                    onDrawBehind { drawRect(brush) }
                 }
             } else {
                 Modifier
@@ -189,14 +211,15 @@ fun PersonAvatar(
     size: Int = 40,
 ) {
     val context = LocalContext.current
-    val loaded by produceState<ImageBitmap?>(initialValue = null, photoUri) {
-        value = photoUri?.let { uri ->
-            withContext(Dispatchers.IO) {
-                ContactPhotos.load(context, uri, size * 3)?.asImageBitmap()
-            }
+    val maxPx = size * 3
+    // A row scrolled back into view starts from the photo it already decoded, so
+    // it neither flashes initials nor decodes and uploads the bitmap a second time.
+    val loaded by produceState(ContactPhotos.cached(photoUri, maxPx), photoUri, maxPx) {
+        value = ContactPhotos.cached(photoUri, maxPx) ?: photoUri?.let { uri ->
+            withContext(Dispatchers.IO) { ContactPhotos.loadCached(context, uri, maxPx) }
         }
     }
-    val photo = loaded
+    val photo = remember(loaded) { loaded?.asImageBitmap() }
     if (photo == null) {
         Avatar(initials, filled, size)
     } else {

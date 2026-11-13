@@ -241,6 +241,9 @@ class TrinityState(private val context: Context, private val scope: CoroutineSco
             val rules = blockStore.rules.value
             smsProviderMissing = !messagesRepo.hasProvider()
             val people = contactsRepo.load()
+            // A photo changed elsewhere keeps its uri, so the decoded copies go
+            // whenever the contacts themselves are read again.
+            ContactPhotos.clearCache()
             contacts = people
             val names = people.associate { it.number to it.name }
             conversations = withLocalRead(

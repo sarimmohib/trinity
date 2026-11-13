@@ -201,14 +201,14 @@ fun CallsScreen(
                 ),
             ) {
             groups.forEach { (day, items) ->
-                item(key = "day-$day") {
+                item(key = "day-$day", contentType = "day") {
                     DayHeader(
                         date = items.firstOrNull()?.entry?.date ?: 0L,
                         calls = items.sumOf { it.count },
                         numbers = items.size,
                     )
                 }
-                items(items.size) { index ->
+                items(items.size, contentType = { "call" }) { index ->
                     val group = items[index]
                     CallRow(
                         group = group,
