@@ -155,6 +155,19 @@ checked in yet, so point at a Gradle 8.7 install:
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
+### Judge scrolling on the release build
+
+Compose runs far slower unoptimised, so a debug APK scrolls noticeably worse than the
+same code shrunk by R8. For anything about smoothness, build and install release:
+
+```bash
+gradle --no-daemon assembleRelease
+# -> app/build/outputs/apk/release/app-release.apk  (signed with the debug key)
+adb install -r app/build/outputs/apk/release/app-release.apk
+# optional: precompile now instead of waiting for the system to do it overnight
+adb shell cmd package compile -m speed-profile -f com.sarim.trinity
+```
+
 ## Where the look lives
 
 The look is code, not a mockup: `ui/theme/Theme.kt` holds the single Expressive

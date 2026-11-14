@@ -80,7 +80,7 @@ fun ContactsScreen(
     val clipboard = LocalClipboardManager.current
 
     // A contact added anywhere else must be here when the tab comes back.
-    LaunchedEffect(Unit) { state.refresh() }
+    LaunchedEffect(Unit) { state.refreshIfStale() }
 
     // Matched once per contact list and rule set, instead of for the whole book on
     // every recomposition and again for each row as it scrolls into view.
@@ -90,21 +90,25 @@ fun ContactsScreen(
             .mapTo(HashSet()) { it.id }
     }
     val blockedCount = blockedIds.size
-    val digits = query.filter { it.isDigit() }
     val needle = query.trim()
-    val filtered = state.contacts.filter { person ->
-        when {
-            query.isBlank() -> true
-            person.name.contains(needle, ignoreCase = true) -> true
-            digits.isNotEmpty() && person.allNumbers.any {
-                it.number.filter { c -> c.isDigit() }.contains(digits)
-            } -> true
-            person.emails.any { it.contains(needle, ignoreCase = true) } -> true
-            else -> false
+    // Searched and sectioned once per contact list and query, not on every
+    // recomposition (a selection change redoes the whole address book otherwise).
+    val filtered = remember(state.contacts, query) {
+        val digits = query.filter { it.isDigit() }
+        state.contacts.filter { person ->
+            when {
+                query.isBlank() -> true
+                person.name.contains(needle, ignoreCase = true) -> true
+                digits.isNotEmpty() && person.allNumbers.any {
+                    it.number.filter { c -> c.isDigit() }.contains(digits)
+                } -> true
+                person.emails.any { it.contains(needle, ignoreCase = true) } -> true
+                else -> false
+            }
         }
     }
-    val sections = filtered.groupBy { it.section }.toSortedMap()
-    val picked = filtered.filter { selection.contains(it) }
+    val sections = remember(filtered) { filtered.groupBy { it.section }.toSortedMap() }
+    val picked = if (selection.active) filtered.filter { selection.contains(it) } else emptyList()
 
     // Back drops the selection before it leaves the tab.
     androidx.activity.compose.BackHandler(enabled = selection.active) { selection.clear() }

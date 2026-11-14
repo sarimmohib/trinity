@@ -109,7 +109,13 @@ fun ThreadScreen(
 
     // Long press a bubble to start picking texts; a tap then adds or drops.
     val selection = remember(conversation.threadId) { Selection<Message> { it.id } }
-    val picked = state.threadMessages(conversation.address).filter { selection.contains(it) }
+
+    // The thread as one sorted list, rebuilt when its messages or unsent rows change —
+    // not on every keystroke in the composer, which recomposes this whole screen.
+    val all = remember(state.messages, state.pending, conversation.address) {
+        state.threadMessages(conversation.address)
+    }
+    val picked = if (selection.active) all.filter { selection.contains(it) } else emptyList()
 
     // Opening the thread marks it read and clears its notification.
     LaunchedEffect(conversation.threadId) { state.openThread(conversation) }
@@ -117,13 +123,14 @@ fun ThreadScreen(
     // Back leaves the selection before it leaves the conversation.
     androidx.activity.compose.BackHandler(enabled = selection.active) { selection.clear() }
 
-    val all = state.threadMessages(conversation.address)
-    val shown = if (query.isBlank()) {
-        all
-    } else {
-        all.filter {
-            it.body.contains(query, ignoreCase = true) ||
-                relativeStamp(it.date).contains(query, ignoreCase = true)
+    val shown = remember(all, query) {
+        if (query.isBlank()) {
+            all
+        } else {
+            all.filter {
+                it.body.contains(query, ignoreCase = true) ||
+                    relativeStamp(it.date).contains(query, ignoreCase = true)
+            }
         }
     }
     val rows = remember(shown, query) {
@@ -236,7 +243,18 @@ fun ThreadScreen(
                     contentPadding = PaddingValues(16.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    items(rows.size) { index ->
+                    items(
+                        rows.size,
+                        // Stored ids are positive and unsent rows borrow negative ones, so
+                        // every message has a key of its own; a day rule has its day.
+                        key = { index ->
+                            when (val row = rows[index]) {
+                                is ThreadRow.Day -> "day-${row.key}"
+                                is ThreadRow.Msg -> "msg-${row.message.id}"
+                            }
+                        },
+                        contentType = { index -> if (rows[index] is ThreadRow.Day) "day" else "message" },
+                    ) { index ->
                         when (val row = rows[index]) {
                             is ThreadRow.Day -> DayRule(row.label)
                             is ThreadRow.Msg -> {
