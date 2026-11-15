@@ -65,24 +65,45 @@ class InCallActivity : ComponentActivity() {
         }
         setContent {
             TrinityTheme {
-                CallSurface(onClose = { finish() })
+                CallSurface(
+                    onClose = {
+                        CallUi.last = null
+                        finish()
+                    },
+                )
             }
         }
     }
 }
 
+/** How long a finished call stays up, saying how it ended, before the screen closes. */
+private const val ENDED_SCREEN_MS = 2_500L
+
 @Composable
 private fun CallSurface(onClose: () -> Unit) {
-    val call = CallUi.live
+    val live = CallUi.live
+    val finished = CallUi.last
+    // A call that has just ended stays up for a moment, saying how it ended.
+    val call = live ?: finished
+    val over = call?.ended == true
     var seen by remember { mutableStateOf(false) }
     var answeredAt by remember { mutableStateOf(0L) }
     var clock by remember { mutableStateOf(0L) }
     var keys by remember { mutableStateOf(false) }
     var sent by remember { mutableStateOf("") }
 
-    // A null call only means "hang up the screen" once there was one to show.
-    LaunchedEffect(call) {
-        if (call != null) seen = true else if (seen) onClose()
+    // No call left closes the screen — after a moment on how the last one ended, when
+    // there is something to say. A new call arriving cancels the wait, because the
+    // effect is keyed on both.
+    LaunchedEffect(live != null, finished) {
+        when {
+            live != null -> seen = true
+            finished != null -> {
+                delay(ENDED_SCREEN_MS)
+                onClose()
+            }
+            seen -> onClose()
+        }
     }
 
     // The clock starts when the call is answered, never when the number is dialled,
@@ -122,6 +143,8 @@ private fun CallSurface(onClose: () -> Unit) {
             MonoLabel(
                 when {
                     call == null -> "CALL OVER"
+                    call.ended -> "CALL OVER"
+                    call.ending -> "ENDING CALL"
                     call.ringing -> "INCOMING CALL"
                     call.holding -> "ON HOLD"
                     call.active -> if (call.speaker) "IN CALL · SPEAKER" else "IN CALL · HANDSET"
@@ -159,19 +182,22 @@ private fun CallSurface(onClose: () -> Unit) {
             Spacer(Modifier.height(14.dp))
             Text(
                 when {
+                    call?.ended == true -> call.outcome
+                    call?.ending == true -> "ENDING"
                     call?.active == true -> formatDuration(seconds)
                     call?.ringing == true -> "RINGING"
                     call?.holding == true -> "ON HOLD"
                     else -> "CALLING"
                 },
                 fontFamily = FontFamily.Monospace,
-                fontSize = 34.sp,
-                color = if (call?.active == true) Palette.Ink else Palette.Faint,
+                fontSize = if (over) 24.sp else 34.sp,
+                color = if (call?.active == true || over) Palette.Ink else Palette.Faint,
             )
             Spacer(Modifier.height(6.dp))
             MonoLabel(
                 when {
                     call == null -> "ENDED"
+                    call.ended -> endSummary(call)
                     call.ringing -> "INCOMING"
                     call.holding -> "ON HOLD"
                     call.active -> "CONNECTED"
@@ -182,7 +208,8 @@ private fun CallSurface(onClose: () -> Unit) {
             )
         }
 
-        Row(
+        // Nothing to mute or key into once the call is over.
+        if (!over) Row(
             Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 24.dp),
@@ -197,7 +224,7 @@ private fun CallSurface(onClose: () -> Unit) {
             CallTile("KEYPAD", Icons.Outlined.Dialpad, keys, Modifier.weight(1f)) { keys = !keys }
         }
 
-        if (keys) {
+        if (keys && !over) {
             Column(
                 Modifier
                     .fillMaxWidth()
@@ -242,7 +269,13 @@ private fun CallSurface(onClose: () -> Unit) {
         }
 
         Column(Modifier.padding(24.dp)) {
-            if (call?.ringing == true) {
+            if (over) {
+                Pill(
+                    label = "DONE",
+                    filled = false,
+                    modifier = Modifier.fillMaxWidth(),
+                ) { onClose() }
+            } else if (call?.ringing == true) {
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Pill(
                         label = "DECLINE",
@@ -275,6 +308,12 @@ private fun initials(name: String?): String =
         .take(2)
         .joinToString("") { it.first().uppercase() }
         .ifEmpty { "#" }
+
+/** The line under a finished call's outcome: how long it ran and who hung up. */
+private fun endSummary(call: LiveCall): String = listOfNotNull(
+    if (call.talkSeconds > 0) formatDuration(call.talkSeconds) else null,
+    call.endedBy,
+).joinToString(" · ")
 
 private fun formatDuration(totalSeconds: Int): String {
     val minutes = totalSeconds / 60

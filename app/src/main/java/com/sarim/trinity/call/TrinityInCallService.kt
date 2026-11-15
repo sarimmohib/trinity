@@ -6,6 +6,7 @@ import android.os.Handler
 import android.os.Looper
 import android.telecom.Call
 import android.telecom.CallAudioState
+import android.telecom.DisconnectCause
 import android.telecom.InCallService
 import android.telecom.TelecomManager
 import android.telecom.VideoProfile
@@ -23,12 +24,49 @@ data class LiveCall(
     val speaker: Boolean = false,
     /** When Telecom says the call was answered; 0 until it is. */
     val connectTime: Long = 0L,
+    /** True when the other side placed the call. */
+    val incoming: Boolean = false,
+    /** Telecom's reason once the call is over (a [DisconnectCause] code); -1 until then. */
+    val endCode: Int = -1,
+    /** Seconds the call was actually connected for; 0 if it never was. */
+    val talkSeconds: Int = 0,
 ) {
     val ringing: Boolean get() = state == Call.STATE_RINGING
     val active: Boolean get() = state == Call.STATE_ACTIVE
     val holding: Boolean get() = state == Call.STATE_HOLDING
     val ending: Boolean
         get() = state == Call.STATE_DISCONNECTED || state == Call.STATE_DISCONNECTING
+
+    /** Over, as opposed to [ending], which also covers the moment of hanging up. */
+    val ended: Boolean get() = state == Call.STATE_DISCONNECTED
+
+    /** How the call finished, in words for the screen. Only meaningful once [ended]. */
+    val outcome: String
+        get() = when (endCode) {
+            DisconnectCause.MISSED -> "MISSED CALL"
+            DisconnectCause.REJECTED -> "DECLINED"
+            DisconnectCause.BUSY -> "LINE BUSY"
+            DisconnectCause.CANCELED -> "CANCELLED"
+            DisconnectCause.ERROR -> "CALL FAILED"
+            DisconnectCause.RESTRICTED -> "CALL NOT ALLOWED"
+            else -> when {
+                talkSeconds > 0 -> "CALL ENDED"
+                // Never connected: what it means depends on which side was waiting.
+                incoming && endCode == DisconnectCause.LOCAL -> "DECLINED"
+                incoming -> "MISSED CALL"
+                endCode == DisconnectCause.LOCAL -> "CANCELLED"
+                else -> "NOT ANSWERED"
+            }
+        }
+
+    /** Who hung up, said only for a call that was actually talked on. */
+    val endedBy: String?
+        get() = when {
+            talkSeconds <= 0 -> null
+            endCode == DisconnectCause.LOCAL -> "YOU HUNG UP"
+            endCode == DisconnectCause.REMOTE -> "THEY HUNG UP"
+            else -> null
+        }
 }
 
 /**
@@ -37,6 +75,13 @@ data class LiveCall(
  */
 object CallUi {
     var live by mutableStateOf<LiveCall?>(null)
+
+    /**
+     * The call that has just finished. Telecom unbinds the service the moment the last
+     * call is removed, taking [live] with it, so how the call ended has to be kept
+     * somewhere that outlives the service for the screen to say it.
+     */
+    var last by mutableStateOf<LiveCall?>(null)
 }
 
 /**
@@ -48,6 +93,7 @@ object CallUi {
 class TrinityInCallService : InCallService() {
 
     private var call: Call? = null
+    private var incoming = false
 
     // What this call is known as. Telecom rewrites the call's details as it connects
     // (the number's form, the carrier's name field), so what was found while it rang
@@ -82,6 +128,9 @@ class TrinityInCallService : InCallService() {
         knownNumber = ""
         lookedUpNumber = null
         contactName = null
+        incoming = stateOf(call) == Call.STATE_RINGING
+        // A new call replaces whatever the screen was still saying about the last one.
+        CallUi.last = null
         this.call = call
         call.registerCallback(watcher)
         publish()
@@ -91,8 +140,21 @@ class TrinityInCallService : InCallService() {
     override fun onCallRemoved(call: Call) {
         super.onCallRemoved(call)
         if (call === this.call) {
+            val finished = CallUi.live?.let { live ->
+                if (live.ended) {
+                    live
+                } else {
+                    // Removed without a disconnected state having been seen.
+                    live.copy(
+                        state = Call.STATE_DISCONNECTED,
+                        endCode = call.details.disconnectCause?.code ?: DisconnectCause.UNKNOWN,
+                        talkSeconds = talkSeconds(call.details),
+                    )
+                }
+            }
             detach()
             this.call = null
+            CallUi.last = finished
             CallUi.live = null
             leaveForeground()
             CallNotifier.clear(this)
@@ -116,14 +178,8 @@ class TrinityInCallService : InCallService() {
             .ifBlank { knownNumber }
             .also { knownNumber = it }
         val audio = callAudioState
-        // Details lag behind the call itself: reading the state off the call is what
-        // lets the live notification switch off its ringing card the moment the
-        // call is answered.
-        val state = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N_MR1) {
-            current.state
-        } else {
-            details.state
-        }
+        val state = stateOf(current)
+        val over = state == Call.STATE_DISCONNECTED
         val live = LiveCall(
             number = number,
             name = resolveName(number, details),
@@ -131,8 +187,17 @@ class TrinityInCallService : InCallService() {
             muted = audio?.isMuted == true,
             speaker = audio?.route == CallAudioState.ROUTE_SPEAKER,
             connectTime = if (state == Call.STATE_ACTIVE) details.connectTimeMillis else 0L,
+            incoming = incoming,
+            endCode = if (over) details.disconnectCause?.code ?: DisconnectCause.UNKNOWN else -1,
+            talkSeconds = if (over) talkSeconds(details) else 0,
         )
         CallUi.live = live
+        // A finished call has nothing left to ring or count: no live card for it.
+        if (over) {
+            leaveForeground()
+            CallNotifier.clear(this)
+            return
+        }
         // Telecom does not ring for the dialer: this both rings and puts the call
         // in the shade, so an incoming call can never arrive silently again.
         val posted = CallNotifier.update(this, live)
@@ -140,6 +205,21 @@ class TrinityInCallService : InCallService() {
         // could go away mid-call, and the shade was left holding a frozen
         // Answer/Decline card with nothing left to update it.
         if (posted != null) holdForeground(posted)
+    }
+
+    /**
+     * Details lag behind the call itself: reading the state off the call is what
+     * lets the live notification switch off its ringing card the moment the
+     * call is answered.
+     */
+    private fun stateOf(call: Call): Int =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N_MR1) call.state else call.details.state
+
+    /** Seconds the call was connected for, from Telecom's own connect time. */
+    private fun talkSeconds(details: Call.Details): Int {
+        val connected = details.connectTimeMillis
+        if (connected <= 0L) return 0
+        return ((System.currentTimeMillis() - connected) / 1000L).toInt().coerceAtLeast(0)
     }
 
     /**
