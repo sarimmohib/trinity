@@ -7,6 +7,7 @@ import android.os.Looper
 import android.telecom.Call
 import android.telecom.CallAudioState
 import android.telecom.InCallService
+import android.telecom.TelecomManager
 import android.telecom.VideoProfile
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -48,6 +49,13 @@ class TrinityInCallService : InCallService() {
 
     private var call: Call? = null
 
+    // What this call is known as. Telecom rewrites the call's details as it connects
+    // (the number's form, the carrier's name field), so what was found while it rang
+    // is kept for the rest of the call instead of being worked out again each time.
+    private var knownNumber = ""
+    private var lookedUpNumber: String? = null
+    private var contactName: String? = null
+
     private val watcher = object : Call.Callback() {
         override fun onStateChanged(call: Call, state: Int) = publish()
 
@@ -71,6 +79,9 @@ class TrinityInCallService : InCallService() {
     override fun onCallAdded(call: Call) {
         super.onCallAdded(call)
         detach()
+        knownNumber = ""
+        lookedUpNumber = null
+        contactName = null
         this.call = call
         call.registerCallback(watcher)
         publish()
@@ -99,7 +110,11 @@ class TrinityInCallService : InCallService() {
     private fun publish() {
         val current = call ?: return
         val details = current.details
+        // The handle can come back empty or reformatted once the call connects; the
+        // last real number stands in for it.
         val number = details.handle?.schemeSpecificPart.orEmpty()
+            .ifBlank { knownNumber }
+            .also { knownNumber = it }
         val audio = callAudioState
         // Details lag behind the call itself: reading the state off the call is what
         // lets the live notification switch off its ringing card the moment the
@@ -111,8 +126,7 @@ class TrinityInCallService : InCallService() {
         }
         val live = LiveCall(
             number = number,
-            name = details.callerDisplayName?.toString()
-                ?: runCatching { ContactNames.lookup(this, number) }.getOrNull(),
+            name = resolveName(number, details),
             state = state,
             muted = audio?.isMuted == true,
             speaker = audio?.route == CallAudioState.ROUTE_SPEAKER,
@@ -126,6 +140,28 @@ class TrinityInCallService : InCallService() {
         // could go away mid-call, and the shade was left holding a frozen
         // Answer/Decline card with nothing left to update it.
         if (posted != null) holdForeground(posted)
+    }
+
+    /**
+     * Who the call is with. The address book comes first: it is the person's own
+     * word for the number. The carrier's name field is only a fallback, and only when
+     * it actually says something — Telecom commonly reports it as an empty string
+     * (not null), which used to win over the contact and blank the name on incoming
+     * calls and, once an outgoing call was picked up, on those too.
+     */
+    private fun resolveName(number: String, details: Call.Details): String? {
+        if (number.isNotBlank() && number != lookedUpNumber) {
+            lookedUpNumber = number
+            contactName = runCatching { ContactNames.lookup(this, number) }
+                .getOrNull()
+                ?.takeIf { it.isNotBlank() }
+        }
+        contactName?.let { return it }
+
+        if (details.callerDisplayNamePresentation != TelecomManager.PRESENTATION_ALLOWED) return null
+        val carrierName = details.callerDisplayName?.toString()?.trim().orEmpty()
+        // A carrier that sends the number back as the "name" adds nothing.
+        return carrierName.takeIf { name -> name.any { it.isLetter() } }
     }
 
     private fun holdForeground(notification: android.app.Notification) {
