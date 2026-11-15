@@ -12,6 +12,8 @@ import kotlinx.coroutines.withContext
 
 class MessagesRepository(private val context: Context) {
 
+    private val contactsRepo = ContactsRepository(context)
+
     fun hasPermission(): Boolean =
         ContextCompat.checkSelfPermission(context, Manifest.permission.READ_SMS) ==
             PackageManager.PERMISSION_GRANTED
@@ -44,6 +46,7 @@ class MessagesRepository(private val context: Context) {
         muted: Set<Long> = emptySet(),
     ): List<Conversation> = withContext(Dispatchers.IO) {
         if (!hasPermission()) return@withContext emptyList()
+        val lookup = NameLookup(contactsRepo, names)
         val byThread = LinkedHashMap<Long, Conversation>()
         val projection = arrayOf(
             Telephony.Sms.THREAD_ID,
@@ -68,7 +71,7 @@ class MessagesRepository(private val context: Context) {
                     val body = cursor.getString(2).orEmpty()
                     val date = cursor.getLong(3)
                     val type = cursor.getInt(5)
-                    val name = names[address] ?: nameForAddress(address)
+                    val name = lookup.of(address)
                     byThread[threadId] = Conversation(
                         threadId = threadId,
                         address = address,
@@ -124,6 +127,8 @@ class MessagesRepository(private val context: Context) {
     suspend fun messages(threadId: Long, rules: BlockStore.Rules): List<Message> =
         withContext(Dispatchers.IO) {
             if (!hasPermission()) return@withContext emptyList()
+            // A thread is mostly one sender: look the name up once, not once per text.
+            val lookup = NameLookup(contactsRepo)
             val out = ArrayList<Message>()
             val projection = arrayOf(
                 Telephony.Sms._ID,
@@ -152,7 +157,7 @@ class MessagesRepository(private val context: Context) {
                             date = cursor.getLong(3),
                             outgoing = outgoing,
                             rule = BlockMatcher.match(
-                                nameForAddress(address),
+                                lookup.of(address),
                                 address,
                                 body,
                                 rules,
@@ -176,6 +181,9 @@ class MessagesRepository(private val context: Context) {
     suspend fun blockedMessages(names: Map<String, String>, rules: BlockStore.Rules): List<Message> =
         withContext(Dispatchers.IO) {
             if (!hasPermission()) return@withContext emptyList()
+            // With no rules nothing can match, so there is no reason to read every text.
+            if (rules.isEmpty) return@withContext emptyList()
+            val lookup = NameLookup(contactsRepo, names)
             val out = ArrayList<Message>()
             val projection = arrayOf(
                 Telephony.Sms._ID,
@@ -196,7 +204,7 @@ class MessagesRepository(private val context: Context) {
                         val address = cursor.getString(1).orEmpty()
                         val body = cursor.getString(2).orEmpty()
                         val hit = BlockMatcher.match(
-                            names[address] ?: nameForAddress(address),
+                            lookup.of(address),
                             address,
                             body,
                             rules,
@@ -276,8 +284,24 @@ class MessagesRepository(private val context: Context) {
         }.getOrDefault(false)
     }
 
-    private suspend fun nameForAddress(address: String): String? =
-        ContactsRepository(context).nameFor(address)
+}
+
+/**
+ * Names for the addresses one pass over the SMS table runs into. The address book is
+ * asked about each distinct address once — including the ones it has no name for —
+ * where it used to be asked again for every text from the same sender.
+ */
+private class NameLookup(
+    private val contacts: ContactsRepository,
+    private val known: Map<String, String> = emptyMap(),
+) {
+    private val seen = HashMap<String, String?>()
+
+    suspend fun of(address: String): String? {
+        known[address]?.let { return it }
+        if (seen.containsKey(address)) return seen[address]
+        return contacts.nameFor(address).also { seen[address] = it }
+    }
 }
 
 /** Writes Trinity's own sent messages back into the provider, as the SMS role requires. */

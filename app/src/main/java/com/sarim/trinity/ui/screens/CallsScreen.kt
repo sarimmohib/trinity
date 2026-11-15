@@ -28,6 +28,7 @@ import androidx.compose.material.icons.outlined.PhoneMissed
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -68,7 +69,11 @@ import com.sarim.trinity.ui.formatNumber
 import com.sarim.trinity.ui.relativeStamp
 import com.sarim.trinity.ui.theme.Palette
 
-/** A run of calls from the same number, collapsed into one row. */
+/**
+ * A run of calls from the same number, collapsed into one row. Never edited once built;
+ * saying so is what lets an unchanged row be skipped instead of redrawn.
+ */
+@Immutable
 private data class CallGroup(
     val entry: CallEntry,
     val count: Int,
@@ -88,7 +93,7 @@ fun CallsScreen(
 ) {
     // Re-read the phone's log every time this tab comes back into view, so a call
     // that just ended is already at the top.
-    LaunchedEffect(Unit) { state.refresh() }
+    LaunchedEffect(Unit) { state.refreshIfStale() }
 
     val rules = state.blockStore.rules.value
     val clipboard = LocalClipboardManager.current
@@ -100,23 +105,29 @@ fun CallsScreen(
     val selection = remember { Selection<CallGroup> { it.entry.id } }
     var confirmBulkDelete by remember { mutableStateOf(false) }
 
-    val blockedCount = state.calls.count { it.rule != null }
-    val missedCount = state.calls.count { it.missed }
+    val blockedCount = remember(state.calls) { state.calls.count { it.rule != null } }
+    val missedCount = remember(state.calls) { state.calls.count { it.missed } }
     val needle = query.trim()
-    val needleDigits = needle.filter { it.isDigit() }
-    val visible = state.calls
-        .filter { rules.hideMatchedCalls || it.rule == null }
-        .filter { entry ->
-            // A name query must actually match the name: comparing against an empty
-            // digit string matched every row, so the field looked broken.
-            needle.isEmpty() ||
-                entry.displayName.contains(needle, ignoreCase = true) ||
-                (needleDigits.isNotEmpty() &&
-                    entry.number.filter { it.isDigit() }.contains(needleDigits))
-        }
-    val groups = collapse(visible)
-    val allGroups = groups.flatMap { it.second }
-    val picked = allGroups.filter { selection.contains(it) }
+    val hideMatched = rules.hideMatchedCalls
+    // Filtered and collapsed once per call list, rule switch or query — not on every
+    // recomposition, which a selection change or the copied note also causes.
+    val groups = remember(state.calls, hideMatched, needle) {
+        val needleDigits = needle.filter { it.isDigit() }
+        collapse(
+            state.calls
+                .filter { hideMatched || it.rule == null }
+                .filter { entry ->
+                    // A name query must actually match the name: comparing against an empty
+                    // digit string matched every row, so the field looked broken.
+                    needle.isEmpty() ||
+                        entry.displayName.contains(needle, ignoreCase = true) ||
+                        (needleDigits.isNotEmpty() &&
+                            entry.number.filter { it.isDigit() }.contains(needleDigits))
+                },
+        )
+    }
+    val allGroups = remember(groups) { groups.flatMap { it.second } }
+    val picked = if (selection.active) allGroups.filter { selection.contains(it) } else emptyList()
 
     // Back drops the selection before it leaves the tab.
     androidx.activity.compose.BackHandler(enabled = selection.active) { selection.clear() }
@@ -208,7 +219,13 @@ fun CallsScreen(
                         numbers = items.size,
                     )
                 }
-                items(items.size, contentType = { "call" }) { index ->
+                items(
+                    items.size,
+                    // The newest call of a run is unique to it, so a row keeps its state
+                    // and its layout when the list above it changes.
+                    key = { index -> items[index].entry.id },
+                    contentType = { "call" },
+                ) { index ->
                     val group = items[index]
                     CallRow(
                         group = group,

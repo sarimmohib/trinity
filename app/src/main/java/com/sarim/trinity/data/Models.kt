@@ -1,9 +1,16 @@
 package com.sarim.trinity.data
 
+import androidx.compose.runtime.Immutable
+
 /** One stored number with the label the address book gave it. */
 data class PhoneEntry(val number: String, val label: String = "MOBILE")
 
-/** A row in the contacts list. */
+/**
+ * A row in the contacts list. Holds lists, which Compose cannot prove unchanging, so
+ * without this a row would redraw on every pass instead of only when its person changes.
+ * The lists are built once and never edited in place.
+ */
+@Immutable
 data class Person(
     val id: Long,
     val name: String,

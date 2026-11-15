@@ -8,6 +8,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.os.SystemClock
 import android.provider.Telephony
 import android.telecom.TelecomManager
 import android.telephony.TelephonyManager
@@ -40,6 +41,7 @@ import com.sarim.trinity.sms.SmsSender
 import com.sarim.trinity.sms.holdsSmsRole
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -235,29 +237,63 @@ class TrinityState(private val context: Context, private val scope: CoroutineSco
             Intent(android.provider.Settings.ACTION_SETTINGS)
         }
 
+    private var refreshJob: Job? = null
+    private var lastRefreshAt = 0L
+    private var smsProviderKnown = false
+
+    /**
+     * Re-reads every store. A read already under way is replaced rather than queued
+     * behind, so a burst of changes ends in one read of the latest data.
+     */
     fun refresh() {
-        scope.launch {
-            loading = true
-            val rules = blockStore.rules.value
-            smsProviderMissing = !messagesRepo.hasProvider()
-            val people = contactsRepo.load()
-            // A photo changed elsewhere keeps its uri, so the decoded copies go
-            // whenever the contacts themselves are read again.
-            ContactPhotos.clearCache()
-            contacts = people
-            val names = people.associate { it.number to it.name }
-            conversations = withLocalRead(
-                messagesRepo.conversations(names, rules, threadPrefs.mutedThreads()),
-            )
-            unreadTotal = conversations.sumOf { it.unread }
-            simCards = sims.active()
-            defaultSubscription = sims.defaultVoiceSubscriptionId()
-            calls = callsRepo.load(rules = rules, names = names, cards = simCards)
-            blockedMessages = messagesRepo.blockedMessages(names, rules)
-            held = quarantine.all()
-            openThreadId?.let { id -> messages = messagesRepo.messages(id, rules) }
-            loading = false
+        refreshJob?.cancel()
+        refreshJob = scope.launch { readAll() }
+    }
+
+    /**
+     * For a tab coming into view. Reading the phone's stores is the heaviest thing the
+     * app does, so a tab that opens while a read is running, or just after one, uses
+     * that read instead of starting another.
+     */
+    fun refreshIfStale() {
+        if (refreshJob?.isActive == true) return
+        if (SystemClock.elapsedRealtime() - lastRefreshAt < FRESH_MS) return
+        refresh()
+    }
+
+    private suspend fun readAll() {
+        loading = true
+        val rules = blockStore.rules.value
+        // The provider is either there or it is not: once it has said yes, stop asking.
+        if (!smsProviderKnown) {
+            val present = messagesRepo.hasProvider()
+            smsProviderKnown = present
+            smsProviderMissing = !present
         }
+        val people = contactsRepo.load()
+        // A photo changed elsewhere keeps its uri, so the decoded copies go
+        // whenever the contacts themselves are read again.
+        ContactPhotos.clearCache()
+        contacts = people
+        // Anything past a plain assignment runs off the main thread: a read usually
+        // lands while the user is already scrolling.
+        val names = withContext(Dispatchers.Default) { people.associate { it.number to it.name } }
+        val threads = withContext(Dispatchers.IO) {
+            withLocalRead(messagesRepo.conversations(names, rules, threadPrefs.mutedThreads()))
+        }
+        conversations = threads
+        unreadTotal = threads.sumOf { it.unread }
+        val (cards, defaultSim) = withContext(Dispatchers.IO) {
+            sims.active() to sims.defaultVoiceSubscriptionId()
+        }
+        simCards = cards
+        defaultSubscription = defaultSim
+        calls = callsRepo.load(rules = rules, names = names, cards = cards)
+        blockedMessages = messagesRepo.blockedMessages(names, rules)
+        held = withContext(Dispatchers.IO) { quarantine.all() }
+        openThreadId?.let { id -> messages = messagesRepo.messages(id, rules) }
+        lastRefreshAt = SystemClock.elapsedRealtime()
+        loading = false
     }
 
     fun openThread(conversation: Conversation) {
@@ -503,7 +539,11 @@ class TrinityState(private val context: Context, private val scope: CoroutineSco
             scope.launch {
                 if (error == null) {
                     val heldRole = holdsSmsRole(context)
-                    if (heldRole) SmsStore.insertSent(context, address, text, local.date)
+                    if (heldRole) {
+                        withContext(Dispatchers.IO) {
+                            SmsStore.insertSent(context, address, text, local.date)
+                        }
+                    }
                     pending = if (heldRole) {
                         pending.filterNot { it.localId == local.localId }
                     } else {
@@ -514,7 +554,7 @@ class TrinityState(private val context: Context, private val scope: CoroutineSco
                         }
                     }
                     refresh()
-                    onSent(SmsStore.threadIdFor(context, address))
+                    onSent(withContext(Dispatchers.IO) { SmsStore.threadIdFor(context, address) })
                 } else {
                     pending = pending.map {
                         if (it.localId == local.localId) {
@@ -709,5 +749,10 @@ class TrinityState(private val context: Context, private val scope: CoroutineSco
             callsRepo.deleteAll()
             refresh()
         }
+    }
+
+    private companion object {
+        /** A read this recent is as good as a new one for a tab that has just opened. */
+        const val FRESH_MS = 3_000L
     }
 }

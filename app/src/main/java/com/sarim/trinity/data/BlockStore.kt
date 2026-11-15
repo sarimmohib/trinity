@@ -47,6 +47,9 @@ class BlockStore private constructor(context: Context) {
     ) {
         val isEmpty: Boolean get() = names.isEmpty() && numbers.isEmpty() && keywords.isEmpty()
         val ruleCount: Int get() = names.size + numbers.size + keywords.size
+
+        /** Lower-cased once per rule set, not once per keyword for every message checked. */
+        val lowerKeywords: List<String> by lazy { keywords.map { it.lowercase() } }
     }
 
     private fun read(): Rules = Rules(
@@ -211,8 +214,8 @@ object BlockMatcher {
 
         if (!body.isNullOrBlank()) {
             val haystack = body.lowercase()
-            rules.keywords.firstOrNull { haystack.contains(it.lowercase()) }
-                ?.let { return RuleHit(RuleHit.Kind.KEYWORD, it) }
+            val hit = rules.lowerKeywords.indexOfFirst { haystack.contains(it) }
+            if (hit >= 0) return RuleHit(RuleHit.Kind.KEYWORD, rules.keywords[hit])
         }
         return null
     }
@@ -230,10 +233,21 @@ object BlockMatcher {
 
     /** Compares the last 8 digits so +92 300 7712008 matches 0300-7712008. */
     fun sameNumber(rule: String, address: String): Boolean {
-        val a = rule.filter { it.isDigit() }
-        val b = address.filter { it.isDigit() }
-        if (a.length < 5 || b.length < 5) return false
-        val tail = minOf(a.length, b.length, 8)
-        return a.takeLast(tail) == b.takeLast(tail)
+        val ruleDigits = rule.count { it.isDigit() }
+        val addressDigits = address.count { it.isDigit() }
+        if (ruleDigits < 5 || addressDigits < 5) return false
+        // Walk both strings from the end, one digit at a time, instead of building
+        // filtered copies: this runs for every message against every number rule, and
+        // for every unnamed call against every saved contact.
+        var i = rule.length - 1
+        var j = address.length - 1
+        repeat(minOf(ruleDigits, addressDigits, 8)) {
+            while (!rule[i].isDigit()) i--
+            while (!address[j].isDigit()) j--
+            if (rule[i] != address[j]) return false
+            i--
+            j--
+        }
+        return true
     }
 }

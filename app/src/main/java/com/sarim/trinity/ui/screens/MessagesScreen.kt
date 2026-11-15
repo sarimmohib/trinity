@@ -76,13 +76,18 @@ fun MessagesScreen(
     onSettings: () -> Unit,
 ) {
     val rules = state.blockStore.rules.value
-    val hidden = state.conversations.filter {
-        it.rule?.kind == RuleHit.Kind.NAME || it.rule?.kind == RuleHit.Kind.NUMBER
+    // Sorted into hidden and shown once per conversation list, not on every recomposition.
+    val hiddenThreads = remember(state.conversations) {
+        state.conversations.count {
+            it.rule?.kind == RuleHit.Kind.NAME || it.rule?.kind == RuleHit.Kind.NUMBER
+        }
     }
-    val visible = state.conversations.filter {
-        it.rule == null || it.rule.kind == RuleHit.Kind.KEYWORD
+    val visible = remember(state.conversations) {
+        state.conversations.filter {
+            it.rule == null || it.rule.kind == RuleHit.Kind.KEYWORD
+        }
     }
-    val hiddenCount = hidden.size + state.blockedMessages.size
+    val hiddenCount = hiddenThreads + state.blockedMessages.size
 
     var menuFor by remember { mutableStateOf<Conversation?>(null) }
     var confirmDelete by remember { mutableStateOf<Conversation?>(null) }
@@ -91,7 +96,7 @@ fun MessagesScreen(
 
     // Long press picks rows; tapping then adds or drops them instead of opening.
     val selection = remember { Selection<Conversation> { it.threadId } }
-    val picked = visible.filter { selection.contains(it) }
+    val picked = if (selection.active) visible.filter { selection.contains(it) } else emptyList()
     var confirmBulkDelete by remember { mutableStateOf(false) }
 
     // The banner walks every route to the SMS role, and lands on the default-apps
@@ -99,7 +104,7 @@ fun MessagesScreen(
     val askForSmsRole = com.sarim.trinity.ui.components.rememberRoleAsker(state) { _ -> }
 
     // Coming back to the tab always re-reads the provider: new texts, new counts.
-    LaunchedEffect(Unit) { state.refresh() }
+    LaunchedEffect(Unit) { state.refreshIfStale() }
 
     // Back drops the selection before it leaves the tab.
     androidx.activity.compose.BackHandler(enabled = selection.active) { selection.clear() }
@@ -183,7 +188,11 @@ fun MessagesScreen(
                         bottom = if (selection.active) 128.dp else 92.dp,
                     ),
                 ) {
-                    items(visible, key = { it.threadId }) { conversation ->
+                    items(
+                        visible,
+                        key = { it.threadId },
+                        contentType = { "conversation" },
+                    ) { conversation ->
                         SwipeableConversationRow(
                             conversation = conversation,
                             selecting = selection.active,
