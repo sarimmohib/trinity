@@ -78,14 +78,10 @@ fun MessagesScreen(
     val rules = state.blockStore.rules.value
     // Sorted into hidden and shown once per conversation list, not on every recomposition.
     val hiddenThreads = remember(state.conversations) {
-        state.conversations.count {
-            it.rule?.kind == RuleHit.Kind.NAME || it.rule?.kind == RuleHit.Kind.NUMBER
-        }
+        state.conversations.count { it.rule?.hidesSender == true }
     }
     val visible = remember(state.conversations) {
-        state.conversations.filter {
-            it.rule == null || it.rule.kind == RuleHit.Kind.KEYWORD
-        }
+        state.conversations.filter { it.rule == null || !it.rule.hidesSender }
     }
     val hiddenCount = hiddenThreads + state.blockedMessages.size
 
@@ -474,9 +470,13 @@ private fun ConversationRow(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f, fill = false),
                 )
-                if (conversation.rule?.kind == RuleHit.Kind.KEYWORD) {
+                conversation.rule?.takeIf { !it.hidesSender }?.let { flag ->
                     Spacer(Modifier.width(7.dp))
-                    MonoLabel("KEYWORD", color = Palette.Ink, size = 7)
+                    MonoLabel(
+                        if (flag.kind == RuleHit.Kind.KEYWORD) "KEYWORD" else "COMBINED",
+                        color = Palette.Ink,
+                        size = 7,
+                    )
                 }
                 if (conversation.muted) {
                     Spacer(Modifier.width(7.dp))

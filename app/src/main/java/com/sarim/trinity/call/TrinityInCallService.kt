@@ -174,8 +174,7 @@ class TrinityInCallService : InCallService() {
         val details = current.details
         // The handle can come back empty or reformatted once the call connects; the
         // last real number stands in for it.
-        val number = details.handle?.schemeSpecificPart.orEmpty()
-            .ifBlank { knownNumber }
+        val number = numberOf(details).ifBlank { knownNumber }
             .also { knownNumber = it }
         val audio = callAudioState
         val state = stateOf(current)
@@ -205,6 +204,17 @@ class TrinityInCallService : InCallService() {
         // could go away mid-call, and the shade was left holding a frozen
         // Answer/Decline card with nothing left to update it.
         if (posted != null) holdForeground(posted)
+    }
+
+    /**
+     * The number as the network gave it. An incoming call can arrive with no handle
+     * yet, or with the number in the gateway info or carrying ";" parameters, any of
+     * which used to leave the lookup with nothing to look up.
+     */
+    private fun numberOf(details: Call.Details): String {
+        val raw = details.handle?.schemeSpecificPart?.takeIf { it.isNotBlank() }
+            ?: details.gatewayInfo?.originalAddress?.schemeSpecificPart.orEmpty()
+        return raw.substringBefore(';').trim()
     }
 
     /**

@@ -20,6 +20,7 @@ import com.sarim.trinity.data.BlockMatcher
 import com.sarim.trinity.data.BlockStore
 import com.sarim.trinity.data.CallEntry
 import com.sarim.trinity.data.CallsRepository
+import com.sarim.trinity.data.CompoundRule
 import com.sarim.trinity.data.ContactPhotos
 import com.sarim.trinity.data.ContactWriter
 import com.sarim.trinity.data.ContactsRepository
@@ -30,11 +31,14 @@ import com.sarim.trinity.data.MessagesRepository
 import com.sarim.trinity.data.PendingMessage
 import com.sarim.trinity.data.Person
 import com.sarim.trinity.data.QuarantineStore
+import com.sarim.trinity.data.Release
 import com.sarim.trinity.data.Scope
 import com.sarim.trinity.data.SimCard
 import com.sarim.trinity.data.Sims
 import com.sarim.trinity.data.SmsStore
 import com.sarim.trinity.data.ThreadPrefs
+import com.sarim.trinity.data.UpdateChecker
+import com.sarim.trinity.data.UpdateNotifier
 import com.sarim.trinity.data.VCards
 import com.sarim.trinity.sms.MessageNotifier
 import com.sarim.trinity.sms.SmsSender
@@ -679,6 +683,94 @@ class TrinityState(private val context: Context, private val scope: CoroutineSco
 
     fun removeKeyword(value: String) {
         blockStore.removeKeyword(value)
+        refresh()
+    }
+
+    // --- updates ---
+
+    private val updates = UpdateChecker(context)
+
+    /** The newest GitHub release, when it is newer than this build. */
+    var availableUpdate by mutableStateOf<Release?>(null)
+        private set
+
+    /** Whether the overlay announcing [availableUpdate] is up. */
+    var updateOverlay by mutableStateOf(false)
+        private set
+
+    var checkingUpdate by mutableStateOf(false)
+        private set
+
+    /** The result of the last manual check, for the Settings row to say out loud. */
+    var updateNote by mutableStateOf<String?>(null)
+        private set
+
+    /** On launch: show what was found before, then look again if it has been a while. */
+    fun startUpdateWatch() {
+        val known = updates.cached()
+        if (known != null) {
+            availableUpdate = known
+            if (!updates.isSkipped(known.version)) updateOverlay = true
+        } else {
+            UpdateNotifier.cancel(context)
+        }
+        if (updates.due()) checkForUpdates(manual = false)
+    }
+
+    fun checkForUpdates(manual: Boolean) {
+        if (checkingUpdate) return
+        checkingUpdate = true
+        if (manual) updateNote = null
+        scope.launch {
+            val outcome = withContext(Dispatchers.IO) { updates.check() }
+            checkingUpdate = false
+            when (outcome) {
+                is UpdateChecker.Outcome.Available -> {
+                    val release = outcome.release
+                    availableUpdate = release
+                    updateNote = "Version ${release.version} is available"
+                    val skipped = updates.isSkipped(release.version)
+                    if (manual || !skipped) updateOverlay = true
+                    if (!skipped && !updates.wasNotified(release.version)) {
+                        UpdateNotifier.show(context, release)
+                        updates.markNotified(release.version)
+                    }
+                }
+                UpdateChecker.Outcome.UpToDate -> {
+                    availableUpdate = null
+                    updateOverlay = false
+                    UpdateNotifier.cancel(context)
+                    if (manual) updateNote = "You're on the latest version (${UpdateChecker.current})"
+                }
+                is UpdateChecker.Outcome.Failed ->
+                    if (manual) updateNote = "Couldn't reach GitHub: ${outcome.reason}"
+            }
+        }
+    }
+
+    fun showUpdate() {
+        if (availableUpdate != null) updateOverlay = true
+    }
+
+    /** "Later": the overlay goes, the notification and the Settings row stay. */
+    fun hideUpdate() {
+        updateOverlay = false
+    }
+
+    /** "Skip": this version stops announcing itself; a newer one still will. */
+    fun skipUpdate() {
+        availableUpdate?.let { updates.skip(it.version) }
+        updateOverlay = false
+        UpdateNotifier.cancel(context)
+    }
+
+    fun addCombined(rule: CompoundRule) {
+        blockStore.addCombined(rule)
+        refresh()
+    }
+
+    fun removeCombined(rule: CompoundRule) {
+        blockStore.removeCombined(rule)
         refresh()
     }
 

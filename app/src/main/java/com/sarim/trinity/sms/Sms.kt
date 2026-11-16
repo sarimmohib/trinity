@@ -121,6 +121,33 @@ object ContactNames {
             null,
             null,
         )?.use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null }
+    }.getOrNull() ?: byDigits(context, address)
+
+    /**
+     * PhoneLookup misses when the incoming number and the saved one are written
+     * differently (+92 300… on the line, 0300… in the book). Comparing the trailing
+     * digits finds them anyway, the same way blocking rules match numbers.
+     */
+    private fun byDigits(context: Context, address: String): String? = runCatching {
+        if (address.count { it.isDigit() } < 5) return@runCatching null
+        context.contentResolver.query(
+            ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+            arrayOf(
+                ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
+                ContactsContract.CommonDataKinds.Phone.NUMBER,
+            ),
+            null,
+            null,
+            null,
+        )?.use { cursor ->
+            while (cursor.moveToNext()) {
+                val number = cursor.getString(1) ?: continue
+                if (com.sarim.trinity.data.BlockMatcher.sameNumber(number, address)) {
+                    return@use cursor.getString(0)
+                }
+            }
+            null
+        }
     }.getOrNull()
 }
 

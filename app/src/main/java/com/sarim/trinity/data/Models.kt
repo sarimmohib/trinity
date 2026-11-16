@@ -159,12 +159,22 @@ data class RuleHit(
     val kind: Kind,
     val value: String,
 ) {
-    enum class Kind { NAME, NUMBER, KEYWORD }
+    /**
+     * COMBO is an AND/OR rule that only looks at who the sender is, so it hides a
+     * conversation like a name or number rule. COMBO_TEXT also looks at what a
+     * message says, so it flags single messages like a keyword.
+     */
+    enum class Kind { NAME, NUMBER, KEYWORD, COMBO, COMBO_TEXT }
+
+    /** True when the whole conversation goes, as opposed to single messages being flagged. */
+    val hidesSender: Boolean
+        get() = kind == Kind.NAME || kind == Kind.NUMBER || kind == Kind.COMBO
 
     val label: String
         get() = when (kind) {
             Kind.NAME -> "NAME RULE"
             Kind.NUMBER -> "NUMBER RULE"
             Kind.KEYWORD -> "KEYWORD RULE"
+            Kind.COMBO, Kind.COMBO_TEXT -> "COMBINED RULE"
         }
 }

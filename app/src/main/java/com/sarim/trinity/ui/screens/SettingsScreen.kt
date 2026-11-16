@@ -52,6 +52,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.sarim.trinity.BuildConfig
+import com.sarim.trinity.data.Links
 import com.sarim.trinity.ui.TrinityState
 import com.sarim.trinity.ui.components.Hairline
 import com.sarim.trinity.ui.components.InkSheet
@@ -294,6 +295,40 @@ fun SettingsScreen(
 
         SettingsSection("ABOUT")
         StaticRow(label = "Version", value = BuildConfig.VERSION_NAME, sub = "DEBUG BUILD")
+        SettingsRow(
+            label = if (state.availableUpdate != null) "Update available" else "Check for updates",
+            value = state.availableUpdate?.version,
+            sub = when {
+                state.checkingUpdate -> "CHECKING GITHUB…"
+                state.updateNote != null -> state.updateNote!!.uppercase()
+                else -> "COMPARES WITH THE LATEST GITHUB RELEASE"
+            },
+            icon = Icons.Outlined.FileDownload,
+            onClick = {
+                if (state.availableUpdate != null) state.showUpdate()
+                else state.checkForUpdates(manual = true)
+            },
+        )
+
+        SettingsSection("SUPPORT TRINITY")
+        SettingsRow(
+            label = "Star the repo",
+            sub = "TAP THE STAR ON GITHUB",
+            icon = Icons.Outlined.Info,
+            onClick = { Links.open(context, Links.STAR_URL) },
+        )
+        SettingsRow(
+            label = "Report an issue",
+            sub = "BUG OR IDEA · OPENS GITHUB ISSUES",
+            icon = Icons.Outlined.Info,
+            onClick = { Links.open(context, Links.ISSUES_URL) },
+        )
+        SettingsRow(
+            label = "Fork and contribute",
+            sub = "COPY THE CODE · SEND A PULL REQUEST",
+            icon = Icons.Outlined.Info,
+            onClick = { Links.open(context, Links.FORK_URL) },
+        )
         StaticRow(
             label = "Replaces",
             value = "",

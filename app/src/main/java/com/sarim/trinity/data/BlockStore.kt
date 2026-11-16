@@ -23,6 +23,40 @@ enum class Scope(val label: String) {
 /** A blocked name or number, and the surface it was meant for. */
 data class Rule(val value: String, val scope: Scope = Scope.Both)
 
+/** How a combined rule joins its conditions: every one must hold, or any one will do. */
+enum class Match(val label: String) {
+    All("AND"),
+    Any("OR"),
+}
+
+/** What a condition looks at. Text is the body of a message, so calls never satisfy it. */
+enum class Field(val label: String) {
+    Name("NAME"),
+    Number("NUMBER"),
+    Text("TEXT"),
+}
+
+/** One test inside a combined rule: the name contains it, the number matches it, or the text says it. */
+data class Condition(val field: Field, val value: String)
+
+/**
+ * A rule made of several conditions joined by AND or OR, e.g. NAME "bank" AND TEXT "otp".
+ * A condition that cannot be checked (text on a call) counts as false, and a rule with
+ * no conditions never matches.
+ */
+data class CompoundRule(
+    val match: Match,
+    val conditions: List<Condition>,
+    val scope: Scope = Scope.Both,
+) {
+    /** True when the rule reads message text, which makes it a per-message rule. */
+    val readsText: Boolean get() = conditions.any { it.field == Field.Text }
+
+    /** Reads back as written: NAME "bank" AND TEXT "otp". */
+    val summary: String
+        get() = conditions.joinToString(" ${match.label} ") { "${it.field.label} \"${it.value}\"" }
+}
+
 /**
  * Blocking rules live in one SharedPreferences file. Three lists, one order of
  * precedence: an explicit name or number match beats a keyword match, because a
@@ -44,9 +78,15 @@ class BlockStore private constructor(context: Context) {
         val keywords: List<String> = emptyList(),
         val allowed: List<String> = emptyList(),
         val hideMatchedCalls: Boolean = true,
+        val combined: List<CompoundRule> = emptyList(),
     ) {
-        val isEmpty: Boolean get() = names.isEmpty() && numbers.isEmpty() && keywords.isEmpty()
-        val ruleCount: Int get() = names.size + numbers.size + keywords.size
+        val isEmpty: Boolean
+            get() = names.isEmpty() && numbers.isEmpty() && keywords.isEmpty() && combined.isEmpty()
+        val ruleCount: Int get() = names.size + numbers.size + keywords.size + combined.size
+
+        /** Split once per rule set: sender-only combined rules run before the allow-list, text ones after. */
+        val senderCombined: List<CompoundRule> by lazy { combined.filterNot { it.readsText } }
+        val textCombined: List<CompoundRule> by lazy { combined.filter { it.readsText } }
 
         /** Lower-cased once per rule set, not once per keyword for every message checked. */
         val lowerKeywords: List<String> by lazy { keywords.map { it.lowercase() } }
@@ -58,7 +98,41 @@ class BlockStore private constructor(context: Context) {
         keywords = readList("keywords"),
         allowed = readList("allowed"),
         hideMatchedCalls = prefs.getBoolean("hideMatchedCalls", true),
+        combined = readCombined(),
     )
+
+    private fun readCombined(): List<CompoundRule> {
+        val raw = prefs.getString("combined", null) ?: return emptyList()
+        return runCatching {
+            val array = JSONArray(raw)
+            (0 until array.length()).mapNotNull { index ->
+                val entry = array.optJSONObject(index) ?: return@mapNotNull null
+                val match = runCatching { Match.valueOf(entry.optString("m")) }.getOrNull()
+                    ?: return@mapNotNull null
+                val scope = runCatching { Scope.valueOf(entry.optString("s")) }
+                    .getOrDefault(Scope.Both)
+                val list = entry.optJSONArray("c") ?: return@mapNotNull null
+                val conditions = (0 until list.length()).mapNotNull { i ->
+                    val item = list.optJSONObject(i) ?: return@mapNotNull null
+                    val field = runCatching { Field.valueOf(item.optString("f")) }.getOrNull()
+                        ?: return@mapNotNull null
+                    val value = item.optString("v").trim()
+                    Condition(field, value).takeIf { value.isNotBlank() }
+                }
+                CompoundRule(match, conditions, scope).takeIf { conditions.isNotEmpty() }
+            }
+        }.getOrDefault(emptyList())
+    }
+
+    private fun writeCombined(rules: List<CompoundRule>) {
+        val array = JSONArray()
+        rules.forEach { rule ->
+            val list = JSONArray()
+            rule.conditions.forEach { list.put(JSONObject().put("f", it.field.name).put("v", it.value)) }
+            array.put(JSONObject().put("m", rule.match.name).put("s", rule.scope.name).put("c", list))
+        }
+        prefs.edit().putString("combined", array.toString()).apply()
+    }
 
     /**
      * Rules are stored as objects carrying their scope. Anything written by an
@@ -110,6 +184,7 @@ class BlockStore private constructor(context: Context) {
         writeRules("numbers", next.numbers)
         writeList("keywords", next.keywords)
         writeList("allowed", next.allowed)
+        writeCombined(next.combined)
         prefs.edit().putBoolean("hideMatchedCalls", next.hideMatchedCalls).apply()
         _rules.value = next
     }
@@ -164,6 +239,21 @@ class BlockStore private constructor(context: Context) {
     fun removeNumber(value: String) = update {
         it.copy(numbers = it.numbers.filterNot { rule -> BlockMatcher.sameNumber(rule.value, value) || rule.value == value })
     }
+    fun addCombined(rule: CompoundRule) {
+        val clean = rule.copy(
+            conditions = rule.conditions
+                .map { it.copy(value = it.value.trim()) }
+                .filter { it.value.isNotBlank() },
+        )
+        if (clean.conditions.isEmpty()) return
+        update { current ->
+            if (current.combined.contains(clean)) current
+            else current.copy(combined = current.combined + clean)
+        }
+    }
+
+    fun removeCombined(rule: CompoundRule) = update { it.copy(combined = it.combined - rule) }
+
     fun removeKeyword(value: String) = update { it.copy(keywords = it.keywords - value) }
     fun removeAllowed(value: String) = update {
         it.copy(allowed = it.allowed.filterNot { entry -> BlockMatcher.sameNumber(entry, value) || entry == value })
@@ -171,7 +261,7 @@ class BlockStore private constructor(context: Context) {
 
     fun setHideMatchedCalls(enabled: Boolean) = update { it.copy(hideMatchedCalls = enabled) }
 
-    /** Drops every name, number, keyword and allowance; the toggle survives. */
+    /** Drops every name, number, keyword, combined rule and allowance; the toggle survives. */
     fun clearAll() = update { Rules(hideMatchedCalls = it.hideMatchedCalls) }
 
     companion object {
@@ -209,8 +299,15 @@ object BlockMatcher {
             rules.numbers.firstOrNull { it.scope.covers(channel) && sameNumber(it.value, address) }
                 ?.let { return RuleHit(RuleHit.Kind.NUMBER, it.value) }
         }
+        // Combined rules that only look at the sender are as firm as a name or number rule.
+        rules.senderCombined.firstOrNull { it.scope.covers(channel) && holds(it, label, address, body) }
+            ?.let { return RuleHit(RuleHit.Kind.COMBO, it.summary) }
+
         // A vouched-for sender keeps their texts; keywords stop applying to them.
         if (!address.isNullOrBlank() && isAllowed(address, rules)) return null
+
+        rules.textCombined.firstOrNull { it.scope.covers(channel) && holds(it, label, address, body) }
+            ?.let { return RuleHit(RuleHit.Kind.COMBO_TEXT, it.summary) }
 
         if (!body.isNullOrBlank()) {
             val haystack = body.lowercase()
@@ -219,6 +316,20 @@ object BlockMatcher {
         }
         return null
     }
+
+    /** AND needs every condition true, OR needs one; an empty rule never holds. */
+    private fun holds(rule: CompoundRule, label: String, address: String?, body: String?): Boolean {
+        if (rule.conditions.isEmpty()) return false
+        val test = { c: Condition -> satisfied(c, label, address, body) }
+        return if (rule.match == Match.All) rule.conditions.all(test) else rule.conditions.any(test)
+    }
+
+    private fun satisfied(c: Condition, label: String, address: String?, body: String?): Boolean =
+        when (c.field) {
+            Field.Name -> label.isNotBlank() && label.contains(c.value, ignoreCase = true)
+            Field.Number -> !address.isNullOrBlank() && sameNumber(c.value, address)
+            Field.Text -> !body.isNullOrBlank() && body.contains(c.value, ignoreCase = true)
+        }
 
     fun isAllowed(address: String, rules: BlockStore.Rules): Boolean =
         rules.allowed.any { sameNumber(it, address) }
