@@ -1,0 +1,7 @@
+- Added the vibration permission so call and message alerts can vibrate.
+- Fixed a crash on Android 8 and 9 when checking the default SMS app or dialer role.
+- Quick reply now saves the sent message to the thread and clears its notification.
+- SMS and MMS links now open the matching conversation or composer, not the dial pad.
+- Sent messages now record which SIM they were sent from.
+- Fixed held texts with identical content colliding when removing one.
+- Cleared lint errors in permissions, API guards and screen state reads.
