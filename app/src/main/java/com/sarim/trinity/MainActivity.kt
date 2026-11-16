@@ -56,6 +56,7 @@ import androidx.core.content.ContextCompat
 import com.sarim.trinity.data.CallEntry
 import com.sarim.trinity.data.Conversation
 import com.sarim.trinity.data.Person
+import com.sarim.trinity.data.SmsLinks
 import com.sarim.trinity.ui.TrinityState
 import com.sarim.trinity.ui.components.Hairline
 import com.sarim.trinity.ui.components.MonoLabel
@@ -84,6 +85,9 @@ class MainActivity : ComponentActivity() {
     /** A tel: hand-off from another app, waiting to be shown on the dial pad. */
     private val dialRequests = MutableStateFlow<String?>(null)
 
+    /** An sms:/mms: hand-off from another app, waiting to open a thread or composer. */
+    private val messageRequests = MutableStateFlow<String?>(null)
+
     /** A notification tapped: which conversation to open. */
     private val threadRequests = MutableStateFlow<Pair<Long, String>?>(null)
 
@@ -94,7 +98,7 @@ class MainActivity : ComponentActivity() {
         uptake(intent)
         setContent {
             TrinityTheme {
-                TrinityApp(dialRequests, threadRequests)
+                TrinityApp(dialRequests, messageRequests, threadRequests)
             }
         }
     }
@@ -112,6 +116,12 @@ class MainActivity : ComponentActivity() {
             threadRequests.value = threadId to intent.getStringExtra(MessageNotifier.EXTRA_ADDRESS).orEmpty()
             // A tapped conversation is a read conversation, whatever screen it opens on.
             intent.removeExtra(MessageNotifier.EXTRA_THREAD)
+        }
+        // A text link is not a dial request: resolve it before anything tel: related.
+        val messageAddress = SmsLinks.address(intent.dataString)
+        if (messageAddress != null) {
+            messageRequests.value = messageAddress
+            return
         }
         val action = intent.action
         if (action != Intent.ACTION_DIAL && action != Intent.ACTION_VIEW && action != Intent.ACTION_CALL) return
@@ -137,6 +147,7 @@ private sealed interface Route {
 @Composable
 private fun TrinityApp(
     dialRequests: MutableStateFlow<String?>,
+    messageRequests: MutableStateFlow<String?>,
     threadRequests: MutableStateFlow<Pair<Long, String>?>,
 ) {
     val context = LocalContext.current
@@ -179,6 +190,19 @@ private fun TrinityApp(
             if (!number.isNullOrBlank()) {
                 state.typeDigits(number)
                 go(Route.Dialpad)
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        messageRequests.collect { address ->
+            if (!address.isNullOrBlank()) {
+                messageRequests.value = null
+                val conversation = state.conversationForNumber(address)
+                go(
+                    if (conversation != null) Route.Thread(conversation)
+                    else Route.NewMessage(to = address),
+                )
             }
         }
     }

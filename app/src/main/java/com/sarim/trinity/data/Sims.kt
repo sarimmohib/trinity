@@ -32,12 +32,12 @@ data class SimCard(
  */
 class Sims(private val context: Context) {
 
-    private fun canReadSubscriptions(): Boolean =
-        ContextCompat.checkSelfPermission(context, Manifest.permission.READ_PHONE_STATE) ==
-            PackageManager.PERMISSION_GRANTED
-
     fun active(): List<SimCard> {
-        if (!canReadSubscriptions()) return emptyList()
+        if (ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.READ_PHONE_STATE,
+            ) != PackageManager.PERMISSION_GRANTED
+        ) return emptyList()
         val manager = context.getSystemService(SubscriptionManager::class.java) ?: return emptyList()
         val list = runCatching { manager.activeSubscriptionInfoList }.getOrNull()
             ?: return emptyList()
@@ -71,7 +71,12 @@ class Sims(private val context: Context) {
         // InCallService to draw the call. Starting an ACTION_CALL intent instead
         // resolves back into this app once it is the default dialer, and a call
         // that was never handed to Telecom simply never goes out.
-        if (telecom != null) {
+        if (telecom != null &&
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.CALL_PHONE,
+            ) == PackageManager.PERMISSION_GRANTED
+        ) {
             val extras = Bundle()
             var onRequestedSim = true
             if (card != null && card.subscriptionId != defaultVoiceSubscriptionId()) {

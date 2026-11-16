@@ -1,5 +1,6 @@
 package com.sarim.trinity.sms
 
+import android.Manifest
 import android.app.Activity
 import android.app.PendingIntent
 import android.app.role.RoleManager
@@ -8,6 +9,7 @@ import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.ContactsContract
@@ -26,6 +28,11 @@ import com.sarim.trinity.data.Scope
 import com.sarim.trinity.data.BlockStore
 import com.sarim.trinity.data.QuarantineStore
 import com.sarim.trinity.data.SmsStore
+import com.sarim.trinity.data.MessagesRepository
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 object SmsSender {
 
@@ -261,6 +268,10 @@ object MessageNotifier {
             .addAction(0, "Mark read", markRead(context, threadId))
             .addAction(replyAction(context, threadId, address))
 
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) return
         runCatching {
             NotificationManagerCompat.from(context).notify(threadId.toInt(), builder.build())
         }
@@ -285,6 +296,10 @@ object MessageNotifier {
                     PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
                 ),
             )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) return
         runCatching {
             NotificationManagerCompat.from(context).notify(9001, builder.build())
         }
@@ -327,9 +342,24 @@ class DirectReplyReceiver : BroadcastReceiver() {
         val address = intent.getStringExtra(MessageNotifier.EXTRA_ADDRESS).orEmpty()
         val threadId = intent.getLongExtra(MessageNotifier.EXTRA_THREAD, -1L)
         if (text.isBlank() || address.isBlank()) return
+        val date = System.currentTimeMillis()
         SmsSender.send(context, address, text) { error ->
-            if (error == null) {
-                MessageNotifier.cancel(context, threadId)
+            if (error != null) return@send
+            // Only the default SMS app writes the provider row; otherwise the system
+            // does it and inserting here too would double-write the sent message.
+            if (holdsSmsRole(context)) {
+                SmsStore.insertSent(context, address, text, date)
+            }
+            val actualThread = if (threadId >= 0) {
+                threadId
+            } else {
+                SmsStore.threadIdFor(context, address) ?: -1L
+            }
+            CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
+                MessagesRepository(context).markThreadRead(actualThread)
+            }
+            if (actualThread >= 0) {
+                MessageNotifier.cancel(context, actualThread)
             }
         }
     }
@@ -422,10 +452,11 @@ class MmsReceiver : BroadcastReceiver() {
 
 /** True while Trinity holds the SMS role — blocking only bites when it does. */
 fun holdsSmsRole(context: Context): Boolean {
-    val roleManager = context.getSystemService(RoleManager::class.java)
-    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && roleManager != null) {
-        roleManager.isRoleHeld(RoleManager.ROLE_SMS)
-    } else {
-        Telephony.Sms.getDefaultSmsPackage(context) == context.packageName
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        val roleManager = context.getSystemService(RoleManager::class.java)
+        if (roleManager != null) {
+            return roleManager.isRoleHeld(RoleManager.ROLE_SMS)
+        }
     }
+    return Telephony.Sms.getDefaultSmsPackage(context) == context.packageName
 }

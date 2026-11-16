@@ -39,6 +39,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.sarim.trinity.data.BlockStore
 import com.sarim.trinity.data.CompoundRule
 import com.sarim.trinity.data.Condition
@@ -61,7 +62,7 @@ fun BlockingScreen(
     var draft by remember { mutableStateOf("") }
     // New rules start covering both surfaces; the choice sticks for the next one.
     var scope by remember { mutableStateOf(Scope.Both) }
-    val rules = state.blockStore.rules.value
+    val rules by state.blockStore.rules.collectAsStateWithLifecycle()
     // The combined rule being built: how its conditions join, and the ones added so far.
     var match by remember { mutableStateOf(Match.All) }
     var field by remember { mutableStateOf(Field.Name) }

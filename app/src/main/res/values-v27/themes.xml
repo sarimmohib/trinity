@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- windowLightNavigationBar is API 27; minSdk is 26. Inherit the whole base
+         style here so the other window colours stay identical on newer devices. -->
+    <style name="Theme.Trinity" parent="Theme.Trinity.Base">
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
+</resources>

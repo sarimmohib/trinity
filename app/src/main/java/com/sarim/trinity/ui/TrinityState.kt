@@ -173,9 +173,11 @@ class TrinityState(private val context: Context, private val scope: CoroutineSco
     }
 
     fun isDefaultSmsApp(): Boolean {
-        val roleManager = context.getSystemService(RoleManager::class.java)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && roleManager != null) {
-            return roleManager.isRoleHeld(RoleManager.ROLE_SMS)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val roleManager = context.getSystemService(RoleManager::class.java)
+            if (roleManager != null) {
+                return roleManager.isRoleHeld(RoleManager.ROLE_SMS)
+            }
         }
         return Telephony.Sms.getDefaultSmsPackage(context) == context.packageName
     }
@@ -191,18 +193,20 @@ class TrinityState(private val context: Context, private val scope: CoroutineSco
      */
     fun defaultAppRequests(kind: DefaultApp): List<Intent> {
         val wanted = mutableListOf<Intent>()
-        val role = if (kind == DefaultApp.Sms) RoleManager.ROLE_SMS else RoleManager.ROLE_DIALER
-        val roleManager = context.getSystemService(RoleManager::class.java)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && roleManager != null &&
-            runCatching { roleManager.isRoleAvailable(role) }.getOrDefault(false)
-        ) {
-            // The role dialog takes the requesting package from the intent. Android
-            // 14+ PermissionController closes itself with "Package name cannot be
-            // null or empty" when it is absent, so state it explicitly instead of
-            // trusting the system to infer it.
-            runCatching { roleManager.createRequestRoleIntent(role) }.getOrNull()
-                ?.putExtra(Intent.EXTRA_PACKAGE_NAME, context.packageName)
-                ?.let { wanted += it }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val role = if (kind == DefaultApp.Sms) RoleManager.ROLE_SMS else RoleManager.ROLE_DIALER
+            val roleManager = context.getSystemService(RoleManager::class.java)
+            if (roleManager != null &&
+                runCatching { roleManager.isRoleAvailable(role) }.getOrDefault(false)
+            ) {
+                // The role dialog takes the requesting package from the intent. Android
+                // 14+ PermissionController closes itself with "Package name cannot be
+                // null or empty" when it is absent, so state it explicitly instead of
+                // trusting the system to infer it.
+                runCatching { roleManager.createRequestRoleIntent(role) }.getOrNull()
+                    ?.putExtra(Intent.EXTRA_PACKAGE_NAME, context.packageName)
+                    ?.let { wanted += it }
+            }
         }
         if (kind == DefaultApp.Sms) {
             @Suppress("DEPRECATION")
@@ -557,7 +561,7 @@ class TrinityState(private val context: Context, private val scope: CoroutineSco
                     val heldRole = holdsSmsRole(context)
                     if (heldRole) {
                         withContext(Dispatchers.IO) {
-                            SmsStore.insertSent(context, address, text, local.date)
+                            SmsStore.insertSent(context, address, text, local.date, subscriptionId)
                         }
                     }
                     pending = if (heldRole) {
@@ -817,12 +821,13 @@ class TrinityState(private val context: Context, private val scope: CoroutineSco
 
     /** True only when the OS says Trinity is the phone app. */
     fun isDefaultDialer(): Boolean {
-        val roleManager = context.getSystemService(RoleManager::class.java)
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && roleManager != null) {
-            roleManager.isRoleHeld(RoleManager.ROLE_DIALER)
-        } else {
-            false
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val roleManager = context.getSystemService(RoleManager::class.java)
+            if (roleManager != null) {
+                return roleManager.isRoleHeld(RoleManager.ROLE_DIALER)
+            }
         }
+        return false
     }
 
     /** How many of Trinity's permissions the user has actually granted. */
@@ -841,7 +846,7 @@ class TrinityState(private val context: Context, private val scope: CoroutineSco
     }
 
     fun discardHeld(entry: QuarantineStore.Entry) {
-        quarantine.removeAt(entry.date, entry.body)
+        quarantine.remove(entry.id)
         refresh()
     }
 

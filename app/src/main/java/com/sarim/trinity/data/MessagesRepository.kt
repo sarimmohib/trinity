@@ -312,7 +312,13 @@ object SmsStore {
         Telephony.Threads.getOrCreateThreadId(context, address)
     }.getOrNull()
 
-    fun insertSent(context: Context, address: String, body: String, date: Long): Long? = runCatching {
+    fun insertSent(
+        context: Context,
+        address: String,
+        body: String,
+        date: Long,
+        subscriptionId: Int? = null,
+    ): Long? = runCatching {
         val threadId = threadIdFor(context, address)
         val values = ContentValues().apply {
             put(Telephony.Sms.ADDRESS, address)
@@ -323,6 +329,7 @@ object SmsStore {
             put(Telephony.Sms.SEEN, 1)
             put(Telephony.Sms.TYPE, Telephony.Sms.MESSAGE_TYPE_SENT)
             threadId?.let { put(Telephony.Sms.THREAD_ID, it) }
+            subscriptionId?.let { put(Telephony.Sms.SUBSCRIPTION_ID, it) }
         }
         context.contentResolver.insert(Telephony.Sms.CONTENT_URI, values)?.let { ContentUris.parseId(it) }
     }.getOrNull()

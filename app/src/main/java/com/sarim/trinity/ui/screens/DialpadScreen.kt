@@ -47,6 +47,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.sarim.trinity.data.BlockMatcher
 import com.sarim.trinity.data.CallEntry
 import com.sarim.trinity.data.Person
@@ -84,7 +85,7 @@ fun DialpadScreen(
     var copied by remember { mutableStateOf(false) }
     val clipboard = LocalClipboardManager.current
     val haptic = LocalHapticFeedback.current
-    val rules = state.blockStore.rules.value
+    val rules by state.blockStore.rules.collectAsStateWithLifecycle()
     val digits = number.filter { it.isDigit() }
     val blocked = BlockMatcher.match(null, number, null, rules)
     val emergency = BlockMatcher.isEmergency(number)

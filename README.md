@@ -90,9 +90,13 @@ itself; use your own key if you publish your own builds.
 
 | Permission | Why |
 | --- | --- |
-| `READ_CALL_LOG`, `READ_PHONE_STATE`, `ANSWER_PHONE_CALLS`, `CALL_PHONE` | The call log, and placing and answering calls |
+| `READ_CALL_LOG`, `WRITE_CALL_LOG`, `READ_PHONE_STATE`, `CALL_PHONE` | The call log, and placing calls |
+| `MANAGE_OWN_CALLS` | Taking over the call screen as the default phone app |
+| `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_PHONE_CALL` | Keeping the live call card and its controls alive for the whole call |
+| `USE_FULL_SCREEN_INTENT` | Showing an incoming call over the lock screen |
+| `VIBRATE` | Vibrating on an incoming call |
 | `READ_SMS`, `SEND_SMS`, `RECEIVE_SMS`, `RECEIVE_MMS` | Showing, sending and receiving texts |
-| `READ_CONTACTS`, `WRITE_CONTACTS` | Your address book, and saving photos to it |
+| `READ_CONTACTS`, `WRITE_CONTACTS`, `READ_SYNC_SETTINGS` | Your address book, saving photos to it, and its sync status |
 | `POST_NOTIFICATIONS` | Notifications for texts, missed calls and updates |
 | `INTERNET` | Only to ask GitHub for the latest release; nothing is sent anywhere else |
 

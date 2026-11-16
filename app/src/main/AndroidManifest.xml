@@ -9,11 +9,12 @@
     <uses-permission android:name="android.permission.SEND_SMS" />
     <uses-permission android:name="android.permission.RECEIVE_SMS" />
     <uses-permission android:name="android.permission.RECEIVE_MMS" />
-    <uses-permission android:name="android.permission.SEND_RESPOND_VIA_MESSAGE" />
     <uses-permission android:name="android.permission.READ_CALL_LOG" />
     <uses-permission android:name="android.permission.WRITE_CALL_LOG" />
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
     <uses-permission android:name="android.permission.CALL_PHONE" />
+    <!-- Vibrating on an incoming call is a normal permission; no runtime prompt. -->
+    <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Incoming calls must reach the screen over the lock screen, even when another
          app is in front. The dialer role grants this; a call app without it only
@@ -23,10 +24,15 @@
          live call card and its controls cannot be killed out from under a call. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" />
+    <uses-permission android:name="android.permission.MANAGE_OWN_CALLS" />
     <!-- The contact screen reports whether the phone's contacts are syncing. -->
     <uses-permission android:name="android.permission.READ_SYNC_SETTINGS" />
     <!-- Only used to ask GitHub's public API for the latest release of Trinity. -->
     <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- Trinity is useful on tablets and ChromeOS too, where there is no SIM; the
+         telephony features are optional, not a precondition for installing. -->
+    <uses-feature android:name="android.hardware.telephony" android:required="false" />
 
     <!-- The contact screen can hand a number to WhatsApp; package visibility makes
          it possible to ask whether WhatsApp is installed at all. -->
