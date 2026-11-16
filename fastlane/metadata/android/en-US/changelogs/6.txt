@@ -1,0 +1,6 @@
+1.2.1
+
+- Rules can now be limited to a time window and specific weekdays.
+- Number rules accept * and ? wildcards; keywords can be whole-word only.
+- Rule packs can be exported and imported, with a preview before replacing or merging.
+- A bounded decision log shows which rule held a message or call, without message text.

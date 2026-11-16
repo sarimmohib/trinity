@@ -54,6 +54,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.sarim.trinity.BuildConfig
 import com.sarim.trinity.data.Links
+import com.sarim.trinity.data.RulePack
 import com.sarim.trinity.ui.TrinityState
 import com.sarim.trinity.ui.components.Hairline
 import com.sarim.trinity.ui.components.InkSheet
@@ -83,6 +84,7 @@ fun SettingsScreen(
     var simSheet by remember { mutableStateOf(false) }
     var themeSheet by remember { mutableStateOf(false) }
     var startTabSheet by remember { mutableStateOf(false) }
+    var ruleImportPack by remember { mutableStateOf<RulePack.Pack?>(null) }
 
     fun open(intent: Intent) = runCatching { context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
 
@@ -93,6 +95,13 @@ fun SettingsScreen(
     val exportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("text/x-vcard"),
     ) { uri -> uri?.let { state.exportContacts(it) } }
+
+    val ruleExportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json"),
+    ) { uri -> uri?.let { state.exportRulePack(it) } }
+    val ruleImportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri -> uri?.let { state.loadRulePack(it) { pack -> ruleImportPack = pack } } }
 
     // Role dialogs are opened directly, not through a result launcher: the screen
     // re-reads the role state on ON_RESUME anyway, and a direct start reports a
@@ -213,6 +222,23 @@ fun SettingsScreen(
             toggle = rules.hideMatchedCalls,
             onToggle = { state.setHideMatchedCalls(it) },
         )
+
+        SettingsSection("RULE PACKS")
+        SettingsRow(
+            label = "Export rules",
+            value = "JSON",
+            icon = Icons.Outlined.Storage,
+            onClick = { ruleExportLauncher.launch("trinity-rules.json") },
+        )
+        SettingsRow(
+            label = "Import rules",
+            value = "PREVIEW FIRST",
+            icon = Icons.Outlined.Storage,
+            onClick = { ruleImportLauncher.launch(arrayOf("application/json")) },
+        )
+        state.rulePackNote?.let { note ->
+            MonoLabel(note, size = 7, color = Palette.Faint, modifier = Modifier.padding(start = 24.dp))
+        }
 
         SettingsSection("MESSAGING")
         SettingsRow(
@@ -375,6 +401,24 @@ fun SettingsScreen(
                 lineHeight = 16.sp,
             )
         }
+    }
+
+    ruleImportPack?.let { pack ->
+        InkSheet(
+            title = "IMPORT RULES",
+            actions = listOf(
+                SheetAction(RulePack.preview(pack), "Replaces every list") {
+                    state.applyRulePack(pack, true)
+                    ruleImportPack = null
+                },
+                SheetAction("Merge with current rules") {
+                    state.applyRulePack(pack, false)
+                    ruleImportPack = null
+                },
+                SheetAction("Cancel") { ruleImportPack = null },
+            ),
+            onDismiss = { ruleImportPack = null },
+        )
     }
 
     if (themeSheet) {

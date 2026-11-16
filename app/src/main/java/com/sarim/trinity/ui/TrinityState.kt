@@ -16,6 +16,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
+import com.sarim.trinity.data.AuditStore
 import com.sarim.trinity.data.BlockMatcher
 import com.sarim.trinity.data.BlockStore
 import com.sarim.trinity.data.CallEntry
@@ -34,8 +35,10 @@ import com.sarim.trinity.data.PendingMessage
 import com.sarim.trinity.data.Person
 import com.sarim.trinity.data.QuarantineStore
 import com.sarim.trinity.data.Release
+import com.sarim.trinity.data.RulePack
 import com.sarim.trinity.data.Scope
 import com.sarim.trinity.data.Search
+import com.sarim.trinity.data.TimeWindow
 import com.sarim.trinity.data.SimCard
 import com.sarim.trinity.data.Sims
 import com.sarim.trinity.data.SmsStore
@@ -68,6 +71,7 @@ class TrinityState(private val context: Context, private val scope: CoroutineSco
     private val callsRepo = CallsRepository(context)
     private val sims = Sims(context)
     private val quarantine = QuarantineStore(context)
+    private val auditStore = AuditStore(context)
     private val threadPrefs = ThreadPrefs(context)
     private val simPrefs =
         context.applicationContext.getSharedPreferences("trinity.sims", Context.MODE_PRIVATE)
@@ -691,12 +695,30 @@ class TrinityState(private val context: Context, private val scope: CoroutineSco
         blockStore.removeNumber(address)
         blockStore.addAllowed(address)
         quarantine.removeFor(address)
+        recordAllowDecision(address)
         refresh()
     }
 
     fun disallowSender(address: String) {
+        // Revoking a vouch is not a message decision, so it must not be logged as ALLOWED.
         blockStore.removeAllowed(address)
         refresh()
+    }
+
+    /** The allow-list changed: remember it without ever storing a message body. */
+    private fun recordAllowDecision(value: String) {
+        runCatching {
+            auditStore.record(
+                AuditStore.Entry(
+                    at = System.currentTimeMillis(),
+                    kind = "SMS",
+                    address = value,
+                    decision = "ALLOWED",
+                    rule = value,
+                    scope = Scope.Both.name,
+                ),
+            )
+        }
     }
 
     fun send(address: String, body: String) {
@@ -742,17 +764,51 @@ class TrinityState(private val context: Context, private val scope: CoroutineSco
         )
     }
 
-    fun addRule(raw: String, scope: Scope = Scope.Both) {
-        if (raw.any { it.isDigit() } && raw.count { it.isDigit() } >= 5) {
-            blockStore.addNumber(raw, scope)
-        } else {
-            blockStore.addName(raw, scope)
+    /**
+     * Adds a name or number, optionally inside a time window. A wildcard makes the
+     * entry a number pattern even when it has fewer than five literal digits — the
+     * [numberPatternError] check is what decides whether that is allowed.
+     */
+    fun addRule(raw: String, scope: Scope = Scope.Both, window: TimeWindow? = null) {
+        val value = raw.trim()
+        val digits = value.count { it.isDigit() }
+        val isNumber = digits >= 5 || (digits > 0 && value.any { it == '*' || it == '?' })
+        when {
+            window == null && isNumber -> blockStore.addNumber(value, scope)
+            window == null -> blockStore.addName(value, scope)
+            isNumber -> blockStore.addScheduledNumber(value, scope, window)
+            else -> blockStore.addScheduledName(value, scope, window)
         }
         refresh()
     }
 
-    fun addKeyword(raw: String) {
-        blockStore.addKeyword(raw)
+    /**
+     * Why [raw] cannot be a number pattern, or null when it is fine (or is a name).
+     * Kept here so the screen only has to show the reason; the matcher owns what a
+     * valid pattern actually matches.
+     */
+    fun numberPatternError(raw: String): String? {
+        val value = raw.trim()
+        if (value.isEmpty()) return null
+        val digits = value.count { it.isDigit() }
+        val wildcard = value.any { it == '*' || it == '?' }
+        // No wildcard and fewer than five digits is simply a contact name.
+        if (!wildcard && digits < 5) return null
+        val legal = value.all {
+            it.isDigit() || it in " +-()*?"
+        }
+        if (!legal) return "Use digits, + - ( ) * ? and spaces"
+        if (digits < 5) return "A pattern needs at least five literal digits"
+        return null
+    }
+
+    fun addKeyword(raw: String, wholeWord: Boolean = false) {
+        blockStore.addKeyword(raw, wholeWord)
+        refresh()
+    }
+
+    fun setKeywordWholeWord(value: String, enabled: Boolean) {
+        blockStore.setKeywordWholeWord(value, enabled)
         refresh()
     }
 
@@ -769,6 +825,75 @@ class TrinityState(private val context: Context, private val scope: CoroutineSco
     fun removeKeyword(value: String) {
         blockStore.removeKeyword(value)
         refresh()
+    }
+
+    // --- audit (M3) ---
+
+    /** Newest decisions first, without any message body. */
+    fun audit(): List<AuditStore.Entry> = auditStore.all()
+
+    fun clearAudit() {
+        auditStore.clear()
+    }
+
+    // --- rule packs (M3) ---
+
+    /** Result of the last rule-file import or export, shown once in Settings. */
+    var rulePackNote by mutableStateOf<String?>(null)
+        private set
+
+    /** The current rules as an exportable pack. The schema is written by [RulePack.serialize]. */
+    fun buildRulePack(name: String = "Trinity rules"): RulePack.Pack {
+        val current = blockStore.rules.value
+        return RulePack.Pack(
+            name = name,
+            names = current.names,
+            numbers = current.numbers,
+            keywords = current.keywords,
+            wholeWordKeywords = current.wholeWordKeywords,
+            combined = current.combined,
+            allowed = current.allowed,
+            exportedAt = System.currentTimeMillis(),
+        )
+    }
+
+    fun exportRulePack(uri: Uri) {
+        scope.launch {
+            val written = withContext(Dispatchers.IO) {
+                runCatching {
+                    val text = RulePack.serialize(buildRulePack())
+                    context.contentResolver.openOutputStream(uri)?.use { out ->
+                        out.write(text.toByteArray(Charsets.UTF_8))
+                    } != null
+                }.getOrDefault(false)
+            }
+            rulePackNote = if (written) "RULES EXPORTED" else "EXPORT FAILED"
+        }
+    }
+
+    /** Reads and validates a file off the main thread, then hands the parsed pack back. */
+    fun loadRulePack(uri: Uri, onLoaded: (RulePack.Pack?) -> Unit) {
+        scope.launch {
+            val pack = withContext(Dispatchers.IO) {
+                runCatching {
+                    context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+                }.getOrNull()?.let { RulePack.parse(it) }
+            }
+            onLoaded(pack)
+        }
+    }
+
+    /**
+     * Applies a validated pack whole: nothing is written until [RulePack.merge] or
+     * [RulePack.replace] has produced a complete new rule set.
+     */
+    fun applyRulePack(pack: RulePack.Pack, replace: Boolean) {
+        val current = blockStore.rules.value
+        val next = if (replace) RulePack.replace(current, pack) else RulePack.merge(current, pack)
+        blockStore.applyRules(next)
+        blockStore.reload()
+        refresh()
+        rulePackNote = "IMPORTED ${pack.name.uppercase()}"
     }
 
     // --- updates ---
@@ -874,7 +999,7 @@ class TrinityState(private val context: Context, private val scope: CoroutineSco
     }
 
     fun addCombined(rule: CompoundRule) {
-        blockStore.addCombined(rule)
+        if (rule.window == null) blockStore.addCombined(rule) else blockStore.addScheduledCombined(rule)
         refresh()
     }
 

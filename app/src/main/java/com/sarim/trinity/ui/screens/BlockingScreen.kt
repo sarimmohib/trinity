@@ -1,5 +1,9 @@
 package com.sarim.trinity.ui.screens
 
+import android.net.Uri
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -8,6 +12,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -23,11 +28,17 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.PersonOff
+import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Tag
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.material3.TimePicker
+import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -39,18 +50,29 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.sarim.trinity.data.AuditStore
 import com.sarim.trinity.data.BlockStore
 import com.sarim.trinity.data.CompoundRule
 import com.sarim.trinity.data.Condition
 import com.sarim.trinity.data.Field
 import com.sarim.trinity.data.Match
+import com.sarim.trinity.data.RulePack
 import com.sarim.trinity.data.Scope
+import com.sarim.trinity.data.TimeWindow
 import com.sarim.trinity.ui.TrinityState
 import com.sarim.trinity.ui.components.Hairline
+import com.sarim.trinity.ui.components.InkSheet
+import com.sarim.trinity.ui.components.MonoButton
 import com.sarim.trinity.ui.components.MonoLabel
 import com.sarim.trinity.ui.components.RuleChip
+import com.sarim.trinity.ui.components.SheetAction
 import com.sarim.trinity.ui.theme.Palette
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @Composable
 fun BlockingScreen(
@@ -60,6 +82,7 @@ fun BlockingScreen(
 ) {
     var segment by remember { mutableStateOf(0) }
     var draft by remember { mutableStateOf("") }
+    var patternError by remember { mutableStateOf<String?>(null) }
     // New rules start covering both surfaces; the choice sticks for the next one.
     var scope by remember { mutableStateOf(Scope.Both) }
     val rules by state.blockStore.rules.collectAsStateWithLifecycle()
@@ -67,6 +90,29 @@ fun BlockingScreen(
     var match by remember { mutableStateOf(Match.All) }
     var field by remember { mutableStateOf(Field.Name) }
     val conditions = remember { mutableStateListOf<Condition>() }
+
+    // Schedule editor: no window means the rule always applies. Empty days means every day.
+    var scheduled by remember { mutableStateOf(false) }
+    var windowStart by remember { mutableStateOf(22 * 60) }
+    var windowEnd by remember { mutableStateOf(7 * 60) }
+    var selectedDays by remember { mutableStateOf(emptySet<Int>()) }
+    var pickStart by remember { mutableStateOf(false) }
+    var pickEnd by remember { mutableStateOf(false) }
+    var wholeWord by remember { mutableStateOf(false) }
+
+    // Audit + rule files. The audit is a plain store, so re-read it when this screen opens.
+    var decisions by remember { mutableStateOf(state.audit()) }
+    var confirmClearAudit by remember { mutableStateOf(false) }
+    var importPack by remember { mutableStateOf<RulePack.Pack?>(null) }
+    val exportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json"),
+    ) { uri -> uri?.let { state.exportRulePack(it) } }
+    val importLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri -> uri?.let { state.loadRulePack(it) { pack -> importPack = pack } } }
+    LaunchedEffect(Unit) { decisions = state.audit() }
+
+    val window: TimeWindow? = if (scheduled) TimeWindow(windowStart, windowEnd, selectedDays) else null
 
     Column(
         Modifier
@@ -160,7 +206,7 @@ fun BlockingScreen(
                     }
                     BasicTextField(
                         value = draft,
-                        onValueChange = { draft = it },
+                        onValueChange = { draft = it; patternError = null },
                         singleLine = true,
                         textStyle = androidx.compose.ui.text.TextStyle(fontSize = 13.sp, color = Palette.Ink),
                         modifier = Modifier.fillMaxWidth(),
@@ -173,14 +219,25 @@ fun BlockingScreen(
                         .clickable {
                             if (draft.isNotBlank()) {
                                 when (segment) {
-                                    0 -> state.addRule(draft, scope)
-                                    1 -> state.addKeyword(draft)
+                                    0 -> {
+                                        val error = state.numberPatternError(draft)
+                                        if (error != null) {
+                                            patternError = error
+                                        } else {
+                                            state.addRule(draft, scope, window)
+                                            draft = ""
+                                        }
+                                    }
+                                    1 -> {
+                                        state.addKeyword(draft, wholeWord)
+                                        draft = ""
+                                    }
                                     else -> {
                                         val next = Condition(field, draft.trim())
                                         if (!conditions.contains(next)) conditions.add(next)
+                                        draft = ""
                                     }
                                 }
-                                draft = ""
                             }
                         },
                     contentAlignment = Alignment.Center,
@@ -203,16 +260,77 @@ fun BlockingScreen(
                         ScopeButton(option, scope == option, Modifier.weight(1f)) { scope = option }
                     }
                 }
+                Spacer(Modifier.height(10.dp))
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 24.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Toggle(scheduled) { scheduled = it }
+                    Spacer(Modifier.width(9.dp))
+                    MonoLabel("SCHEDULED", size = 8, color = if (scheduled) Palette.Ink else Palette.Faint)
+                }
+                if (scheduled) {
+                    Spacer(Modifier.height(9.dp))
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = 24.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        TimeButton("FROM", formatMinute(windowStart), Modifier.weight(1f)) { pickStart = true }
+                        TimeButton("TO", formatMinute(windowEnd), Modifier.weight(1f)) { pickEnd = true }
+                    }
+                    Spacer(Modifier.height(9.dp))
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = 24.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        dayNames.forEach { (number, short, full) ->
+                            DayChip(short, full, number in selectedDays, Modifier.weight(1f)) {
+                                selectedDays = if (number in selectedDays) selectedDays - number else selectedDays + number
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(5.dp))
+                    MonoLabel(
+                        "NO DAY SELECTED = EVERY DAY · PAST MIDNIGHT IS SUPPORTED",
+                        size = 7,
+                        color = Palette.Faint,
+                        modifier = Modifier.padding(horizontal = 24.dp),
+                    )
+                }
+            }
+            if (segment == 0) {
+                Spacer(Modifier.height(8.dp))
+                MonoLabel(
+                    "* = ANY DIGITS · ? = ONE DIGIT · AT LEAST FIVE LITERAL DIGITS",
+                    size = 7,
+                    color = Palette.Faint,
+                    modifier = Modifier.padding(horizontal = 24.dp),
+                )
+                patternError?.let { reason ->
+                    Spacer(Modifier.height(4.dp))
+                    MonoLabel("! ${reason.uppercase()}", size = 8, color = Palette.Ink, modifier = Modifier.padding(horizontal = 24.dp))
+                }
+            }
+            if (segment == 1) {
+                Spacer(Modifier.height(9.dp))
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 24.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Toggle(wholeWord) { wholeWord = it }
+                    Spacer(Modifier.width(9.dp))
+                    MonoLabel("WHOLE WORD ONLY", size = 8, color = if (wholeWord) Palette.Ink else Palette.Faint)
+                }
             }
         }
 
         if (segment == 0) {
             SectionLabel("BLOCKED NAMES & NUMBERS")
             rules.names.forEach { rule ->
-                RuleRow(rule.value, "NAME · ${rule.scope.label}") { state.removeName(rule.value) }
+                RuleRow(rule.value, "NAME · ${rule.scope.label}", window = rule.window) { state.removeName(rule.value) }
             }
             rules.numbers.forEach { rule ->
-                RuleRow(rule.value, "NUMBER · ${rule.scope.label}") { state.removeNumber(rule.value) }
+                RuleRow(rule.value, "NUMBER · ${rule.scope.label}", window = rule.window) { state.removeNumber(rule.value) }
             }
             if (rules.names.isEmpty() && rules.numbers.isEmpty()) {
                 EmptyRules("No names blocked yet.")
@@ -232,7 +350,7 @@ fun BlockingScreen(
                         .height(40.dp)
                         .background(Palette.Ink, RoundedCornerShape(5.dp))
                         .clickable {
-                            state.addCombined(CompoundRule(match, conditions.toList(), scope))
+                            state.addCombined(CompoundRule(match, conditions.toList(), scope, window))
                             conditions.clear()
                         },
                     horizontalArrangement = Arrangement.Center,
@@ -244,7 +362,7 @@ fun BlockingScreen(
             SectionLabel("COMBINED RULES")
             rules.combined.forEach { rule ->
                 val where = if (rule.readsText) "TEXTS" else rule.scope.label
-                RuleRow(rule.summary, "${rule.match.label} · $where") { state.removeCombined(rule) }
+                RuleRow(rule.summary, "${rule.match.label} · $where", window = rule.window) { state.removeCombined(rule) }
             }
             if (rules.combined.isEmpty()) {
                 EmptyRules("No combined rules yet. Example: NAME \"bank\" AND TEXT \"otp\".")
@@ -261,7 +379,7 @@ fun BlockingScreen(
                     horizontalArrangement = Arrangement.spacedBy(7.dp),
                 ) {
                     rules.keywords.take(3).forEach { word ->
-                        RuleChip(word, 0) { state.removeKeyword(word) }
+                        KeywordChip(word, word in rules.wholeWordKeywords) { state.removeKeyword(word) }
                     }
                 }
                 if (rules.keywords.size > 3) {
@@ -272,7 +390,7 @@ fun BlockingScreen(
                         horizontalArrangement = Arrangement.spacedBy(7.dp),
                     ) {
                         rules.keywords.drop(3).forEach { word ->
-                            RuleChip(word, 0) { state.removeKeyword(word) }
+                            KeywordChip(word, word in rules.wholeWordKeywords) { state.removeKeyword(word) }
                         }
                     }
                 }
@@ -286,6 +404,39 @@ fun BlockingScreen(
             rules.allowed.forEach { address ->
                 RuleRow(address, "ALLOWED") { state.disallowSender(address) }
             }
+        }
+
+        Spacer(Modifier.height(12.dp))
+        Hairline()
+        SectionLabel("RECENT DECISIONS · ${decisions.size}")
+        if (decisions.isEmpty()) {
+            EmptyRules("No decisions recorded yet. Blocks and allowances appear here.")
+        } else {
+            decisions.sortedByDescending { it.at }.take(30).forEach { entry -> DecisionRow(entry) }
+            if (decisions.size > 30) {
+                MonoLabel(
+                    "NEWEST 30 OF ${decisions.size}",
+                    size = 7,
+                    color = Palette.Faint,
+                    modifier = Modifier.padding(start = 24.dp, top = 4.dp),
+                )
+            }
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp, vertical = 8.dp),
+            ) {
+                MonoButton("CLEAR DECISIONS", { confirmClearAudit = true })
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
+        Hairline()
+        SectionLabel("RULE FILES")
+        FileRow("Export rules", "JSON · ALL LISTS") { exportLauncher.launch("trinity-rules.json") }
+        FileRow("Import rules", "PREVIEW BEFORE APPLYING") { importLauncher.launch(arrayOf("application/json")) }
+        state.rulePackNote?.let { note ->
+            MonoLabel(note, size = 7, color = Palette.Faint, modifier = Modifier.padding(start = 24.dp, top = 4.dp))
         }
 
         Spacer(Modifier.height(12.dp))
@@ -323,6 +474,50 @@ fun BlockingScreen(
         }
         Hairline()
         Spacer(Modifier.height(24.dp))
+    }
+
+    if (pickStart || pickEnd) {
+        MinutePickerDialog(
+            initial = if (pickStart) windowStart else windowEnd,
+            onPick = { minutes -> if (pickStart) windowStart = minutes else windowEnd = minutes },
+            onDismiss = { pickStart = false; pickEnd = false },
+        )
+    }
+    if (confirmClearAudit) {
+        InkSheet(
+            title = "CLEAR DECISIONS",
+            actions = listOf(
+                SheetAction(
+                    "Clear all ${decisions.size} decisions",
+                    "Cannot be undone",
+                ) {
+                    state.clearAudit()
+                    decisions = state.audit()
+                    confirmClearAudit = false
+                },
+                SheetAction("Cancel") { confirmClearAudit = false },
+            ),
+            onDismiss = { confirmClearAudit = false },
+        )
+    }
+    importPack?.let { pack ->
+        InkSheet(
+            title = "IMPORT RULES",
+            actions = listOf(
+                SheetAction(RulePack.preview(pack), "Replaces every list") {
+                    state.applyRulePack(pack, true)
+                    decisions = state.audit()
+                    importPack = null
+                },
+                SheetAction("Merge with current rules") {
+                    state.applyRulePack(pack, false)
+                    decisions = state.audit()
+                    importPack = null
+                },
+                SheetAction("Cancel") { importPack = null },
+            ),
+            onDismiss = { importPack = null },
+        )
     }
 }
 
@@ -380,7 +575,7 @@ private fun SectionLabel(text: String) {
 }
 
 @Composable
-private fun RuleRow(value: String, sub: String, onRemove: () -> Unit) {
+private fun RuleRow(value: String, sub: String, window: TimeWindow? = null, onRemove: () -> Unit) {
     Column {
         Row(
             Modifier
@@ -406,7 +601,11 @@ private fun RuleRow(value: String, sub: String, onRemove: () -> Unit) {
                     overflow = TextOverflow.Ellipsis,
                 )
                 Spacer(Modifier.height(2.dp))
-                MonoLabel(sub, size = 8, color = Palette.Faint)
+                MonoLabel(
+                    if (window == null) sub else "$sub · ${windowLabel(window)}",
+                    size = 8,
+                    color = Palette.Faint,
+                )
             }
             Icon(
                 Icons.Outlined.Close,
@@ -444,6 +643,144 @@ fun Toggle(on: Boolean, onChange: (Boolean) -> Unit) {
                 .size(20.dp)
                 .background(Palette.Paper, CircleShape),
         )
+    }
+}
+
+private val dayNames = listOf(
+    Triple(1, "M", "Monday"),
+    Triple(2, "T", "Tuesday"),
+    Triple(3, "W", "Wednesday"),
+    Triple(4, "T", "Thursday"),
+    Triple(5, "F", "Friday"),
+    Triple(6, "S", "Saturday"),
+    Triple(7, "S", "Sunday"),
+)
+
+private fun formatMinute(minute: Int): String =
+    "${(minute / 60).toString().padStart(2, '0')}:${(minute % 60).toString().padStart(2, '0')}"
+
+private fun windowLabel(window: TimeWindow?): String {
+    if (window == null) return "ALWAYS"
+    val days = if (window.days.isEmpty()) "DAILY" else window.days.sorted().joinToString(",")
+    return "${formatMinute(window.startMinute)}-${formatMinute(window.endMinute)} · $days"
+}
+
+@Composable
+private fun TimeButton(label: String, value: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Box(
+        modifier
+            .height(40.dp)
+            .background(Palette.Bone, RoundedCornerShape(4.dp))
+            .border(1.dp, Palette.Line, RoundedCornerShape(4.dp))
+            .clickable(onClickLabel = "$label $value") { onClick() },
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            MonoLabel(label, size = 7, color = Palette.Faint)
+            MonoLabel(value, size = 10)
+        }
+    }
+}
+
+@Composable
+private fun DayChip(
+    short: String,
+    full: String,
+    active: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier
+            .height(30.dp)
+            .background(if (active) Palette.Ink else Palette.Bone, RoundedCornerShape(4.dp))
+            .border(1.dp, if (active) Palette.Ink else Palette.Line, RoundedCornerShape(4.dp))
+            .clickable(onClickLabel = full) { onClick() },
+        contentAlignment = Alignment.Center,
+    ) {
+        MonoLabel(short, size = 9, color = if (active) Palette.Paper else Palette.Ink)
+    }
+}
+
+@Composable
+private fun KeywordChip(word: String, wholeWord: Boolean, onRemove: () -> Unit) {
+    RuleChip(if (wholeWord) "$word · WHOLE" else word, 0, onRemove)
+}
+
+@Composable
+private fun DecisionRow(entry: AuditStore.Entry) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 24.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            MonoLabel(
+                "${SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(entry.at))} · ${entry.kind} · ${entry.decision}",
+                size = 8,
+            )
+            MonoLabel("${entry.rule} · ${entry.scope}", size = 7, color = Palette.Faint)
+        }
+        MonoLabel(entry.address, size = 7, color = Palette.Faint)
+    }
+    Hairline()
+}
+
+@Composable
+private fun FileRow(title: String, sub: String, onClick: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .height(52.dp)
+            .clickable(onClickLabel = title) { onClick() }
+            .padding(horizontal = 24.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(title, fontSize = 12.sp, color = Palette.Ink)
+            MonoLabel(sub, size = 7, color = Palette.Faint)
+        }
+        Icon(
+            Icons.Outlined.ChevronRight,
+            contentDescription = null,
+            tint = Palette.Muted,
+            modifier = Modifier.size(16.dp),
+        )
+    }
+    Hairline()
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun MinutePickerDialog(
+    initial: Int,
+    onPick: (Int) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        val pickerState = rememberTimePickerState(
+            initialHour = initial / 60,
+            initialMinute = initial % 60,
+            is24Hour = true,
+        )
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(24.dp)
+                .background(Palette.Paper, RoundedCornerShape(8.dp))
+                .padding(16.dp),
+        ) {
+            TimePicker(state = pickerState)
+            Spacer(Modifier.height(12.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                MonoButton("SET", {
+                    onPick(pickerState.hour * 60 + pickerState.minute)
+                    onDismiss()
+                })
+                MonoButton("CANCEL", onDismiss)
+            }
+        }
     }
 }
 
