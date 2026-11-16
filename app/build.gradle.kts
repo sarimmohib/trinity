@@ -12,22 +12,22 @@ android {
         minSdk = 26
         targetSdk = 34
         versionCode = 1
-        versionName = "0.1.0"
+        versionName = "1.0.0"
     }
 
     buildTypes {
         release {
-            // Compose is much slower unoptimised: a debug build can scroll at half the
-            // frame rate of the same code through R8. Shrinking is what makes this the
-            // build to judge (and use) scrolling on.
+            // Compose is much slower unoptimised, so the release build is the one to
+            // ship: R8 shrinks the code and the resource shrinker drops unused assets.
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
-            // Trinity is not released, so there is no upload key yet. The debug key
-            // keeps `assembleRelease` installable, and updatable over a debug install.
+            // Signed with the debug key so a build from source installs and updates
+            // over itself without an upload key. Replace it with your own key for a
+            // store release; F-Droid signs the builds it publishes.
             signingConfig = signingConfigs.getByName("debug")
         }
     }

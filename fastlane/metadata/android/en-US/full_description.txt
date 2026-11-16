@@ -1,0 +1,17 @@
+Trinity replaces three stock apps on your phone - Phone, Messages and Contacts - with a single app that does all three, in one look.
+
+It is open source, with no ads, no trackers and no telemetry, and it needs no account. Everything it shows comes from your own phone: the call log, your SMS and your contacts.
+
+CALLS
+Your call log, grouped by person, with direction, duration and time. A dial pad, and in-call controls: mute, speaker, keypad and hang up. Incoming calls show who is calling even when the number arrives in a different format than the one saved in your contacts. When a call ends, a short summary tells you whether it was answered, missed, declined, busy or failed, how long it lasted and who hung up.
+
+MESSAGES
+Conversations and threads grouped by person, quick reply from the notification, sending, forwarding, copying and deleting, muting a conversation, and starting a new message from a number.
+
+CONTACTS
+Your address book with per-person call and message history. Add, edit and delete contacts, set a contact photo straight into the phone's contacts - Trinity keeps no copy. WhatsApp availability when WhatsApp shares its contacts, with chat and call shortcuts, and an indicator that says whether your contacts are actually syncing.
+
+BLOCKING
+Name and number rules hide a whole conversation and can silence its calls. Keyword rules flag or hide individual messages. Combined rules join conditions with AND / OR, for example a name and a word in the text. Blocked texts are held aside instead of deleted, so you can see what was caught and let a sender through later. Rules can apply to calls only, messages only, or both.
+
+Trinity needs Android 8.0 or newer and replaces the Phone, Messages and Contacts roles, so Android asks you to confirm which app handles calls, SMS and contacts.

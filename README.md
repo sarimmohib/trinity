@@ -1,190 +1,107 @@
 # Trinity
 
-One Android app in place of the stock **Phone**, **Messages** and **Contacts** apps,
-with name-based and keyword-based blocking for messages and calls.
+**Calls, messages and contacts in one app.**
 
-```
-Calls  ·  Messages  ·  Contacts        one surface, three tabs
-```
+Trinity replaces three of the stock apps on your phone — Phone, Messages and Contacts
+— with a single app that does all three, in one look. It is open source, has no ads,
+no trackers and no telemetry, and it does not need an account. Everything it shows
+comes from your own phone: the call log, your SMS, your contacts.
 
-> **Work in progress.** Trinity is being used day to day by its author on a Xiaomi
-> `spes` running Android 16, and is not released. Expect rough edges.
+Glass surfaces, rounded shapes and a calm green/blue/teal palette. One look, light
+and dark, the same on every screen.
 
-## The look — glass, shaped and coloured by Material Expressive
+## What it does
 
-One look only, and it is a hybrid of two ingredients:
+### Calls
+* Your call log, newest first, grouped by person, with direction, duration and time.
+* Dial pad, with in-call controls: mute, speaker, keypad and hang up.
+* Incoming calls show who is calling, even when the number arrives in a different
+  format from the one saved in your contacts — `+92 300…` on the line is matched to
+  `0300…` in the address book.
+* When a call ends you get a short summary: whether it was answered, missed,
+  declined, busy or failed, how long it lasted, and who hung up.
 
-* **Glass** supplies the surface — a rounded, faintly translucent block with a
-  colour of its own that lets the page show through. Nothing sits on a solid slab
-  and **there are no gradients anywhere**; the frosted quality is texture, not
-  gloss: a 1px diagonal weave every 7dp under a white hairline edge.
-* **Material 3 Expressive** supplies the shapes, the colour roles and the type —
-  rounder corners, a green/blue/teal scheme, per-person tints.
+### Messages
+* Conversations and threads, grouped by person, with quick reply from the
+  notification.
+* Sending, forwarding, copying and deleting; muting a conversation; starting a new
+  message from a number.
+* If Trinity holds the SMS role, your texts come to it directly instead of the stock
+  app.
 
-There is no paper theme, no plain Material theme and no wallpaper-derived palette
-in the app. Glass without Expressive would be grey slabs; Expressive without glass
-would be opaque tonal surfaces. Trinity is deliberately the two together.
+### Contacts
+* Your address book, with per-person call history and message history.
+* Add, edit and delete contacts; set a contact photo straight into the phone's
+  contacts, without Trinity keeping a copy.
+* WhatsApp availability when WhatsApp shares its contacts, plus chat and call
+  shortcuts.
+* A Google-sync indicator that says whether your contacts are actually syncing.
 
-The recipe lives in one place, `Modifier.glassBlock(tint, radius, strength)`
-(`ui/components/Common.kt`):
+### Blocking
+* **Name** and **number** rules hide a whole conversation and can silence its calls.
+* **Keyword** rules flag or hide individual messages.
+* **Combined rules** join conditions with AND / OR — for example a name *and* a word
+  in the text.
+* Blocked texts are held aside instead of deleted, so you can see what was caught and
+  let a sender through later.
+* Calls and texts can be blocked per surface: calls only, messages only, or both.
 
-| Part | Value |
-| --- | --- |
-| tint alpha | `0.26` light / `0.28` dark, scaled by `strength`, capped at `0.9` |
-| edge | `0.8dp` white, `60%` light / `12%` dark |
-| texture | diagonal white lines, `34%` light / `5%` dark |
-| radius | `18dp`–`26dp` (`20dp` default) |
+### Updates
+Settings can check GitHub for a newer release and tell you once, with the release
+notes. No background service, no account, and it can be skipped for any version.
 
-Colour is fixed, not taken from the wallpaper: the Expressive scheme in
-`ui/theme/Theme.kt` uses three roles only, so a wallpaper can never drag purple or
-indigo into the app.
+## Install
 
-| Role | Light | Dark | Used for |
-| --- | --- | --- | --- |
-| primary (green) | `#2E7A61` | `#8FD5BC` | active tab, primary action, selection bar |
-| secondary (blue) | `#2B5D8C` | `#A9C8EA` | search fields, secondary actions |
-| tertiary (teal) | `#1F7A8C` | `#8FD1DE` | WhatsApp actions |
-| background | `#F3F8F5` | `#0E1412` | page behind the glass |
-| surface | `#FAFDFB` | `#111816` | sheets and composers |
-| on surface | `#171D1A` | `#DDE5E0` | text |
+Download the latest `app-release.apk` from
+[Releases](https://github.com/sarimmohib/trinity/releases) and open it on your phone.
+Android 8.0 (API 26) or newer is required.
 
-Each person also gets a tint cycled from the container roles, so a list reads as a
-stack of differently coloured pieces rather than one repeated block.
+Trinity replaces the Phone, Messages and Contacts roles, so Android will ask you to
+confirm which app handles calls, SMS and contacts. Grant the permissions it asks for;
+each one is used for that screen only.
 
-Brightness is the only setting: **Follow the system**, Light or Dark, and it only
-picks the light or dark Expressive scheme. It never falls back to the old Material
-look. If you add a colour, add a role; if you add a gradient, you are changing the
-brief.
+## Build from source
 
-## Selection
+You need JDK 17 or newer (JDK 21 works), the Android SDK with platform 34, and the
+SDK's `local.properties` pointing at it:
 
-Long-press any row in **Calls**, **Messages**, **Contacts** or a chat to start
-picking; tapping then adds or removes rows instead of opening them. The tab's
-bottom action is replaced by a selection bar with the count and what can be done:
-
-| Where | Actions |
-| --- | --- |
-| Conversations | Read, Mute/Unmute, Delete, All (+ Actions opens the single-row sheet) |
-| Calls | Copy numbers, Block, Delete, All (+ Info) |
-| Contacts | Copy numbers, Block, Delete, All (+ Open) |
-| Chat messages | Copy, Forward, Delete, All (+ Actions for details) |
-
-`CANCEL` or the back gesture leaves the selection; destructive actions confirm
-first and name how many items they will remove.
-
-## The contact screen
-
-Beyond call and text:
-
-* **Photo** — tap the avatar to pick an image. It is cropped square, scaled and
-  written into the contact's own photo row in the phone's provider. Nothing is
-  copied into Trinity. `Remove photo` puts the contact back.
-* **Availability** — WhatsApp publishes its identities into the contacts provider
-  (raw contacts under the `com.whatsapp` account, JID in `SYNC1`), so the screen can
-  say **AVAILABLE** for a person who is actually on WhatsApp instead of guessing
-  from the installed app. Numbers on WhatsApp are marked `WA`.
-* **WhatsApp** — chat and WhatsApp voice actions, plus the WhatsApp mark on every
-  call-log row.
-* **Call history for this contact** — last calls with direction, duration and
-  timestamp, each opening the call-log detail screen.
-* **Google contacts sync** — read from the provider's accounts and sync flags
-  (`ON`, `OFF`, `AUTO-SYNC OFF`, `NO GOOGLE ACCOUNT`); tapping opens the system sync
-  settings.
-
-## Blocking semantics
-
-Two independent rule lists, matched on every refresh:
-
-* **Name rules** and **number rules** hide a whole conversation and (optionally)
-  silence its calls. Names/numbers win over keywords.
-* **Keyword rules** hide an individual message. In the thread it stays visible as a
-  flagged card with **SHOW ONCE** / **ALLOW SENDER**; in the list it shows as `KEYWORD`.
-
-When Trinity holds the SMS role, a text that matches a rule is filed in the
-quarantine store (`data/QuarantineStore.kt`) instead of the system inbox, so the
-**Held** screen is a real audit trail, not a filter. `ALLOW SENDER` drops the rule
-that caught the message.
-
-## Layout
-
-```
-app/src/main/java/com/sarim/trinity/
-  MainActivity.kt     route state, permission gate, tab bar
-  call/               InCallService, in-call screen, call notification + ring
-  data/               BlockStore + BlockMatcher, repositories, ContactWriter,
-                      ContactChannels (WhatsApp + sync), ContactPhotos,
-                      QuarantineStore, ThreadPrefs
-  sms/                SMS_DELIVER / WAP_PUSH receivers, sender, notifier
-  ui/theme/Theme.kt   one Expressive scheme (light/dark) + Palette roles
-  ui/components/      glassBlock, PersonAvatar, Selection (long-press picking),
-                      MonoLabel, Hairline, InkSheet, BottomAction, ScreenHeader
-  ui/screens/         Messages, Thread, Calls, Contacts, Person, Blocking, Held,
-                      Dialpad, NewContact, Settings
+```properties
+sdk.dir=/path/to/Android/sdk
 ```
 
-Kotlin + Jetpack Compose, single `:app` module, minSdk 26 / compile+target 34.
-No Room, no DataStore, no navigation library: `SharedPreferences` + `org.json` and a
-hand-rolled `Route` sealed interface. Photos are decoded with `BitmapFactory`; there
-is no image-loading dependency.
-
-## Screens
-
-| Screen | File |
-| --- | --- |
-| Calls | `CallsScreen` |
-| Messages | `MessagesScreen` |
-| Conversation | `ThreadScreen` |
-| Contacts | `ContactsScreen` |
-| Contact detail | `PersonScreen` |
-| Blocking / Held | `BlockingScreen`, `HeldScreen` |
-| Dial pad | `DialpadScreen` |
-| In call | `InCallActivity` |
-| New contact / message | `NewContactScreen`, `NewMessageScreen` |
-| Settings | `SettingsScreen` |
-
-## Build the APK
-
-JDK 21 is required (system Java 25 will not work with Gradle 8.7); `gradle.properties`
-already pins it. `local.properties` points at the SDK. There is no Gradle wrapper
-checked in yet, so point at a Gradle 8.7 install:
+Then:
 
 ```bash
-# from the repo root
-"$HOME/.gradle/wrapper/dists/gradle-8.7-bin/*/gradle-8.7/bin/gradle" --no-daemon assembleDebug
-# -> app/build/outputs/apk/debug/app-debug.apk
+./gradlew assembleRelease
+# app/build/outputs/apk/release/app-release.apk
+```
+
+A debug build installs the same way:
+
+```bash
+./gradlew assembleDebug
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-### Judge scrolling on the release build
+The release build is signed with the debug key so it installs and updates over
+itself; use your own key if you publish your own builds.
 
-Compose runs far slower unoptimised, so a debug APK scrolls noticeably worse than the
-same code shrunk by R8. For anything about smoothness, build and install release:
+## Permissions
 
-```bash
-gradle --no-daemon assembleRelease
-# -> app/build/outputs/apk/release/app-release.apk  (signed with the debug key)
-adb install -r app/build/outputs/apk/release/app-release.apk
-# optional: precompile now instead of waiting for the system to do it overnight
-adb shell cmd package compile -m speed-profile -f com.sarim.trinity
-```
+| Permission | Why |
+| --- | --- |
+| `READ_CALL_LOG`, `READ_PHONE_STATE`, `ANSWER_PHONE_CALLS`, `CALL_PHONE` | The call log, and placing and answering calls |
+| `READ_SMS`, `SEND_SMS`, `RECEIVE_SMS`, `RECEIVE_MMS` | Showing, sending and receiving texts |
+| `READ_CONTACTS`, `WRITE_CONTACTS` | Your address book, and saving photos to it |
+| `POST_NOTIFICATIONS` | Notifications for texts, missed calls and updates |
+| `INTERNET` | Only to ask GitHub for the latest release; nothing is sent anywhere else |
 
-## Where the look lives
+## Contributing
 
-The look is code, not a mockup: `ui/theme/Theme.kt` holds the single Expressive
-scheme (light and dark) and the colour roles, and `glassBlock` in
-`ui/components/Common.kt` holds the glass recipe. Change it there.
-
-## Status
-
-Running on the author's Xiaomi `spes` (Android 16). Exercised on the device so far:
-the three tabs, contact photos (attach, display, remove), WhatsApp availability and
-chat hand-off, the Google sync indicator, and the long-press selection actions.
-
-Implemented and building, but not yet through a full pass on this phone: the
-incoming-call notification and live in-call card (counter, mute, speaker, end call),
-the SMS role handoff, and the `SMS_DELIVER` quarantine path. When WhatsApp's contact
-sync is off the availability row honestly reads `NO RECORD` rather than assuming the
-number is not on WhatsApp.
+Ideas, bug reports and pull requests are welcome —
+[open an issue](https://github.com/sarimmohib/trinity/issues) to start. Please keep the
+look: glass surfaces and Material 3 Expressive shapes, no gradients and no
+wallpaper-derived colours.
 
 ## Licence
 

@@ -294,7 +294,11 @@ fun SettingsScreen(
         )
 
         SettingsSection("ABOUT")
-        StaticRow(label = "Version", value = BuildConfig.VERSION_NAME, sub = "DEBUG BUILD")
+        StaticRow(
+            label = "Version",
+            value = BuildConfig.VERSION_NAME,
+            sub = if (BuildConfig.BUILD_TYPE == "release") "RELEASE BUILD" else "DEBUG BUILD",
+        )
         SettingsRow(
             label = if (state.availableUpdate != null) "Update available" else "Check for updates",
             value = state.availableUpdate?.version,
