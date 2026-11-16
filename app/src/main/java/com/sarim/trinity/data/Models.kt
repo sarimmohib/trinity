@@ -74,8 +74,13 @@ data class Message(
     val outgoing: Boolean,
     val rule: RuleHit?,
     val state: MessageState = if (outgoing) MessageState.SENT else MessageState.RECEIVED,
+    /** The provider row id for an MMS; null for an ordinary SMS. */
+    val mmsId: Long? = null,
+    /** A decoded image part's URI for a picture message, when one is available. */
+    val attachmentUri: String? = null,
 ) {
     val isPending: Boolean get() = state == MessageState.SENDING || state == MessageState.FAILED
+    val isMms: Boolean get() = mmsId != null
 }
 
 /** A message the user just sent, before the provider has agreed to keep it. */

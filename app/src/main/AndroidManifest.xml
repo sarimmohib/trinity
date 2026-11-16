@@ -102,7 +102,7 @@
             android:exported="false" />
 
         <receiver
-            android:name=".sms.MmsReceiver"
+            android:name=".mms.MmsReceiver"
             android:exported="true"
             android:permission="android.permission.BROADCAST_WAP_PUSH">
             <intent-filter>

@@ -25,6 +25,7 @@ import com.sarim.trinity.data.ContactPhotos
 import com.sarim.trinity.data.ContactWriter
 import com.sarim.trinity.data.ContactsRepository
 import com.sarim.trinity.data.Conversation
+import com.sarim.trinity.data.isMmsMessageId
 import com.sarim.trinity.data.Message
 import com.sarim.trinity.data.MessageState
 import com.sarim.trinity.data.MessagesRepository
@@ -525,9 +526,11 @@ class TrinityState(private val context: Context, private val scope: CoroutineSco
 
     /** Deletes picked messages; rows still on their way out are dropped instead. */
     fun deleteMessages(ids: Collection<Long>) {
-        val unsent = ids.filter { it < 0 }.map { -it }.toSet()
+        // MMS rows live in a far-negative band so they cannot collide with SMS ids;
+        // only the small negative ids are unsent placeholders.
+        val unsent = ids.filter { it < 0 && !isMmsMessageId(it) }.map { -it }.toSet()
         if (unsent.isNotEmpty()) pending = pending.filterNot { it.localId in unsent }
-        val stored = ids.filter { it > 0 }
+        val stored = ids.filter { it > 0 || isMmsMessageId(it) }
         if (stored.isEmpty()) return
         scope.launch {
             stored.forEach { messagesRepo.deleteMessage(it) }

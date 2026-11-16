@@ -1,5 +1,8 @@
 package com.sarim.trinity.ui.screens
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -20,7 +23,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -29,11 +34,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.sarim.trinity.mms.MmsComposer
 import com.sarim.trinity.ui.TrinityState
 import com.sarim.trinity.ui.components.Avatar
 import com.sarim.trinity.ui.components.Hairline
@@ -67,6 +74,21 @@ fun NewMessageScreen(
     var simSheet by remember { mutableStateOf(false) }
     // True when the text is waiting on a line choice, because "ask every time" is on.
     var askSend by remember { mutableStateOf(false) }
+    var mmsStatus by remember { mutableStateOf<String?>(null) }
+    val context = LocalContext.current
+    val mediaLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        MmsComposer.send(context, recipients, uri, body.ifBlank { null }, state.selectedSubscription) { error ->
+            if (error == null) {
+                body = ""
+                mmsStatus = "PHOTO SENT"
+                val first = recipients.firstOrNull()
+                if (first != null) onSent(null, first)
+            } else {
+                mmsStatus = error
+            }
+        }
+    }
 
     val needle = query.trim()
     val digits = needle.filter { it.isDigit() }
@@ -293,6 +315,10 @@ fun NewMessageScreen(
                 )
                 MonoLabel(smsCounter(body), color = Palette.Faint, size = 8)
             }
+            if (mmsStatus != null) {
+                Spacer(Modifier.height(6.dp))
+                MonoLabel(mmsStatus.orEmpty(), color = Palette.Faint, size = 8)
+            }
         }
 
         // Send sits with the thumb, and the SIM it will leave from sits beside it.
@@ -303,6 +329,16 @@ fun NewMessageScreen(
                 .padding(horizontal = 20.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            IconButton(
+                onClick = {
+                    mediaLauncher.launch(
+                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                    )
+                },
+                enabled = recipients.isNotEmpty(),
+            ) {
+                Icon(Icons.Outlined.Image, contentDescription = "Attach a photo")
+            }
             val simLabel = state.sendSimLabel()
             if (simLabel != null) {
                 SimChip(simLabel) { simSheet = true }

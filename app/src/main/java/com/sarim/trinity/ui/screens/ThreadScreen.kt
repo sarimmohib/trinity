@@ -1,6 +1,10 @@
 package com.sarim.trinity.ui.screens
 
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.net.Uri
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -35,7 +39,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -43,7 +49,10 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
@@ -58,6 +67,7 @@ import androidx.compose.ui.unit.sp
 import com.sarim.trinity.data.Conversation
 import com.sarim.trinity.data.Message
 import com.sarim.trinity.data.MessageState
+import com.sarim.trinity.mms.MmsAddresses
 import com.sarim.trinity.ui.TrinityState
 import com.sarim.trinity.ui.absoluteStamp
 import com.sarim.trinity.ui.components.Avatar
@@ -77,7 +87,9 @@ import com.sarim.trinity.ui.components.SendButton
 import com.sarim.trinity.ui.components.SimChip
 import com.sarim.trinity.ui.components.SimSheet
 import com.sarim.trinity.ui.theme.Palette
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** A row in the thread: either a day rule or one message. */
 private sealed interface ThreadRow {
@@ -507,6 +519,10 @@ private fun ThreadHeader(
     onMenu: () -> Unit,
     onBlocking: () -> Unit,
 ) {
+    // The provider owns thread grouping; this only labels a joined MMS address.
+    val recipients = conversation.address.let(MmsAddresses::parse)
+    val headerName = conversation.name
+        ?: if (recipients.size > 1) MmsAddresses.format(recipients) else conversation.shownNumber
     Column {
         Row(
             Modifier
@@ -528,7 +544,7 @@ private fun ThreadHeader(
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(
-                    conversation.name ?: conversation.shownNumber,
+                    headerName,
                     fontSize = 15.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = Palette.Ink,
@@ -594,6 +610,37 @@ private fun DayRule(label: String) {
     }
 }
 
+/**
+ * Decodes an MMS image off the main thread, downsampled to at most 512 px on a side
+ * so a photo never fills memory just to sit in a 96 dp thumbnail. Null while loading
+ * or if the part cannot be read, which leaves the bubble showing its "PHOTO" label.
+ */
+@Composable
+private fun rememberMmsThumbnail(uriString: String?): State<Bitmap?> {
+    val context = LocalContext.current
+    return produceState<Bitmap?>(initialValue = null, uriString, context) {
+        if (uriString == null) return@produceState
+        value = withContext(Dispatchers.IO) {
+            runCatching {
+                val uri = Uri.parse(uriString)
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                context.contentResolver.openInputStream(uri)?.use {
+                    BitmapFactory.decodeStream(it, null, bounds)
+                }
+                val width = bounds.outWidth
+                val height = bounds.outHeight
+                if (width <= 0 || height <= 0) return@runCatching null
+                var sample = 1
+                while (width / sample > 512 || height / sample > 512) sample *= 2
+                val options = BitmapFactory.Options().apply { inSampleSize = sample }
+                context.contentResolver.openInputStream(uri)?.use {
+                    BitmapFactory.decodeStream(it, null, options)
+                }
+            }.getOrNull()
+        }
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun MessageBubble(
@@ -640,6 +687,22 @@ private fun MessageBubble(
                 .combinedClickable(onClick = onClick, onLongClick = onLongPress)
                 .padding(horizontal = 13.dp, vertical = 10.dp),
         ) {
+            if (message.isMms) {
+                val thumbnail by rememberMmsThumbnail(message.attachmentUri)
+                val bitmap = thumbnail
+                if (bitmap != null) {
+                    Image(
+                        bitmap.asImageBitmap(),
+                        contentDescription = "Picture message",
+                        modifier = Modifier
+                            .size(96.dp)
+                            .clip(RoundedCornerShape(8.dp)),
+                    )
+                } else {
+                    Text("PHOTO", fontSize = 13.sp, color = if (message.outgoing) Palette.Paper else Palette.Ink)
+                }
+                Spacer(Modifier.height(4.dp))
+            }
             Text(
                 highlight(message.body.ifBlank { "(no text)" }, query, message.outgoing),
                 fontSize = 13.sp,

@@ -445,11 +445,6 @@ class SmsDeliverReceiver : BroadcastReceiver() {
     }
 }
 
-/** Required to hold the default-SMS role; MMS bodies are left untouched for v1. */
-class MmsReceiver : BroadcastReceiver() {
-    override fun onReceive(context: Context, intent: Intent) = Unit
-}
-
 /** True while Trinity holds the SMS role — blocking only bites when it does. */
 fun holdsSmsRole(context: Context): Boolean {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {

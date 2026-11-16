@@ -1,0 +1,7 @@
+1.1.0
+
+- Incoming picture messages are now received and shown in the thread instead of being dropped while Trinity holds the SMS role.
+- Blocked picture messages go to Held rather than the system inbox.
+- You can attach a photo when composing a new message.
+- Threads and the conversation list include picture messages.
+- Held picture messages are labelled PHOTO and show no image preview in notifications.

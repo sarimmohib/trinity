@@ -76,7 +76,8 @@ fun HeldScreen(state: TrinityState, onBack: () -> Unit) {
                     val entry = state.held[index]
                     HeldCard(
                         title = entry.address,
-                        body = entry.body,
+                        // A held picture has no text to preview; say what it is instead.
+                        body = if (entry.body.isBlank() && entry.kind == "MMS") "PHOTO" else entry.body,
                         stamp = absoluteStamp(entry.date),
                         rule = "${entry.ruleKind} · ${entry.ruleValue}",
                         primaryLabel = "DISCARD",

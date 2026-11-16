@@ -23,6 +23,14 @@ class QuarantineStore(context: Context) {
         val ruleValue: String,
         /** Distinguishes two otherwise identical held texts; filled in by [add]. */
         val id: String = "",
+        /** An MMS subject line, when the held item was a picture message. */
+        val subject: String? = null,
+        /** A held image part, kept on disk so it can be reviewed later. */
+        val attachmentPath: String? = null,
+        /** The provider thread an MMS belongs to, when one is known. */
+        val threadId: Long? = null,
+        /** "SMS" or "MMS"; older entries default to SMS. */
+        val kind: String = "SMS",
     )
 
     fun add(entry: Entry) {
@@ -45,7 +53,11 @@ class QuarantineStore(context: Context) {
                     .put("date", it.date)
                     .put("ruleKind", it.ruleKind)
                     .put("ruleValue", it.ruleValue)
-                    .put("id", it.id),
+                    .put("id", it.id)
+                    .put("subject", it.subject)
+                    .put("attachmentPath", it.attachmentPath)
+                    .put("threadId", it.threadId)
+                    .put("kind", it.kind),
             )
         }
         prefs.edit().putString("entries", array.toString()).apply()
@@ -68,6 +80,11 @@ class QuarantineStore(context: Context) {
                     ruleValue = obj.optString("ruleValue"),
                     // Files written before ids existed still load: derive a stable one.
                     id = obj.optString("id").ifBlank { "$date|$address|$body" },
+                    // Files written before MMS fields existed still load with defaults.
+                    subject = obj.optString("subject").ifBlank { null },
+                    attachmentPath = obj.optString("attachmentPath").ifBlank { null },
+                    threadId = if (obj.has("threadId")) obj.optLong("threadId") else null,
+                    kind = obj.optString("kind").ifBlank { "SMS" },
                 )
             }
         }.getOrDefault(emptyList())
