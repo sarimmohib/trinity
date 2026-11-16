@@ -7,6 +7,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONArray
 import org.json.JSONObject
+import java.time.LocalDateTime
 
 /** Where a rule bites. Keywords are texts-only, so they never need this. */
 enum class Scope(val label: String) {
@@ -20,8 +21,34 @@ enum class Scope(val label: String) {
         channel == null || this == Both || this == channel
 }
 
-/** A blocked name or number, and the surface it was meant for. */
-data class Rule(val value: String, val scope: Scope = Scope.Both)
+/**
+ * A clock window measured in minutes from midnight. A [startMinute] greater than
+ * [endMinute] crosses midnight. An empty [days] means every day; otherwise the set
+ * holds ISO day numbers, 1 = Monday through 7 = Sunday.
+ */
+data class TimeWindow(
+    val startMinute: Int,
+    val endMinute: Int,
+    val days: Set<Int> = emptySet(),
+) {
+    /** True when [now] falls inside this window. Pure JVM logic, no Android calls. */
+    fun contains(now: LocalDateTime): Boolean {
+        if (days.isNotEmpty() && now.dayOfWeek.value !in days) return false
+        val minute = now.hour * 60 + now.minute
+        return if (startMinute <= endMinute) {
+            minute in startMinute..endMinute
+        } else {
+            minute >= startMinute || minute <= endMinute
+        }
+    }
+}
+
+/** A blocked name or number, the surface it was meant for, and an optional time window. */
+data class Rule(
+    val value: String,
+    val scope: Scope = Scope.Both,
+    val window: TimeWindow? = null,
+)
 
 /** How a combined rule joins its conditions: every one must hold, or any one will do. */
 enum class Match(val label: String) {
@@ -42,12 +69,14 @@ data class Condition(val field: Field, val value: String)
 /**
  * A rule made of several conditions joined by AND or OR, e.g. NAME "bank" AND TEXT "otp".
  * A condition that cannot be checked (text on a call) counts as false, and a rule with
- * no conditions never matches.
+ * no conditions never matches. [window], when set, gates the whole rule rather than
+ * each condition on its own.
  */
 data class CompoundRule(
     val match: Match,
     val conditions: List<Condition>,
     val scope: Scope = Scope.Both,
+    val window: TimeWindow? = null,
 ) {
     /** True when the rule reads message text, which makes it a per-message rule. */
     val readsText: Boolean get() = conditions.any { it.field == Field.Text }
@@ -79,6 +108,8 @@ class BlockStore private constructor(context: Context) {
         val allowed: List<String> = emptyList(),
         val hideMatchedCalls: Boolean = true,
         val combined: List<CompoundRule> = emptyList(),
+        /** The subset of [keywords] that must appear as a whole word to hit. */
+        val wholeWordKeywords: List<String> = emptyList(),
     ) {
         val isEmpty: Boolean
             get() = names.isEmpty() && numbers.isEmpty() && keywords.isEmpty() && combined.isEmpty()
@@ -90,16 +121,39 @@ class BlockStore private constructor(context: Context) {
 
         /** Lower-cased once per rule set, not once per keyword for every message checked. */
         val lowerKeywords: List<String> by lazy { keywords.map { it.lowercase() } }
+
+        /** Membership set for whole-word keywords, so matching stays O(1) per keyword. */
+        val lowerWholeWords: Set<String> by lazy { wholeWordKeywords.map { it.lowercase() }.toSet() }
     }
 
-    private fun read(): Rules = Rules(
-        names = readRules("names"),
-        numbers = readRules("numbers"),
-        keywords = readList("keywords"),
-        allowed = readList("allowed"),
-        hideMatchedCalls = prefs.getBoolean("hideMatchedCalls", true),
-        combined = readCombined(),
-    )
+    private fun read(): Rules {
+        val (keywords, wholeWordKeywords) = readKeywords()
+        return Rules(
+            names = readRules("names"),
+            numbers = readRules("numbers"),
+            keywords = keywords,
+            wholeWordKeywords = wholeWordKeywords,
+            allowed = readList("allowed"),
+            hideMatchedCalls = prefs.getBoolean("hideMatchedCalls", true),
+            combined = readCombined(),
+        )
+    }
+
+    /** Re-read the preferences file, e.g. after a rule-pack import replaced it on disk. */
+    fun reload() {
+        _rules.value = read()
+    }
+
+    /** Persist every list at once and publish the new rule set in one shot. */
+    fun applyRules(rules: Rules) {
+        writeRules("names", rules.names)
+        writeRules("numbers", rules.numbers)
+        writeKeywords(rules.keywords, rules.wholeWordKeywords)
+        writeList("allowed", rules.allowed)
+        writeCombined(rules.combined)
+        prefs.edit().putBoolean("hideMatchedCalls", rules.hideMatchedCalls).apply()
+        _rules.value = rules
+    }
 
     private fun readCombined(): List<CompoundRule> {
         val raw = prefs.getString("combined", null) ?: return emptyList()
@@ -119,7 +173,7 @@ class BlockStore private constructor(context: Context) {
                     val value = item.optString("v").trim()
                     Condition(field, value).takeIf { value.isNotBlank() }
                 }
-                CompoundRule(match, conditions, scope).takeIf { conditions.isNotEmpty() }
+                CompoundRule(match, conditions, scope, readWindow(entry)).takeIf { conditions.isNotEmpty() }
             }
         }.getOrDefault(emptyList())
     }
@@ -129,15 +183,36 @@ class BlockStore private constructor(context: Context) {
         rules.forEach { rule ->
             val list = JSONArray()
             rule.conditions.forEach { list.put(JSONObject().put("f", it.field.name).put("v", it.value)) }
-            array.put(JSONObject().put("m", rule.match.name).put("s", rule.scope.name).put("c", list))
+            val entry = JSONObject().put("m", rule.match.name).put("s", rule.scope.name).put("c", list)
+            rule.window?.let { entry.put("w", windowJson(it)) }
+            array.put(entry)
         }
         prefs.edit().putString("combined", array.toString()).apply()
+    }
+
+    /** Reads the optional `"w": {"s":..,"e":..,"d":[..]}` object; absence means no schedule. */
+    private fun readWindow(entry: JSONObject): TimeWindow? {
+        val window = entry.optJSONObject("w") ?: return null
+        val days = window.optJSONArray("d")
+        val selected = if (days == null) {
+            emptySet()
+        } else {
+            (0 until days.length()).mapNotNull { i -> days.optInt(i, -1).takeIf { it in 1..7 } }.toSet()
+        }
+        return TimeWindow(window.optInt("s", 0), window.optInt("e", 0), selected)
+    }
+
+    private fun windowJson(window: TimeWindow): JSONObject {
+        val days = JSONArray()
+        window.days.sorted().forEach { days.put(it) }
+        return JSONObject().put("s", window.startMinute).put("e", window.endMinute).put("d", days)
     }
 
     /**
      * Rules are stored as objects carrying their scope. Anything written by an
      * older build is a bare string, which meant "both" — that is how an existing
-     * rule keeps behaving exactly as it did before this field existed.
+     * rule keeps behaving exactly as it did before this field existed. A "w" object,
+     * when present, restores the optional schedule.
      */
     private fun readRules(key: String): List<Rule> {
         val raw = prefs.getString(key, null) ?: return emptyList()
@@ -150,7 +225,7 @@ class BlockStore private constructor(context: Context) {
                         val value = entry.optString("v").trim()
                         val scope = runCatching { Scope.valueOf(entry.optString("s")) }
                             .getOrDefault(Scope.Both)
-                        Rule(value, scope).takeIf { value.isNotBlank() }
+                        Rule(value, scope, readWindow(entry)).takeIf { value.isNotBlank() }
                     }
                     else -> null
                 }
@@ -161,9 +236,46 @@ class BlockStore private constructor(context: Context) {
     private fun writeRules(key: String, rules: List<Rule>) {
         val array = JSONArray()
         rules.forEach { rule ->
-            array.put(JSONObject().put("v", rule.value).put("s", rule.scope.name))
+            val entry = JSONObject().put("v", rule.value).put("s", rule.scope.name)
+            rule.window?.let { entry.put("w", windowJson(it)) }
+            array.put(entry)
         }
         prefs.edit().putString(key, array.toString()).apply()
+    }
+
+    /**
+     * Keywords are bare strings for the common case; a whole-word keyword is stored
+     * as `{"v":"otp","ww":true}`. Old bare-string files therefore load unchanged.
+     */
+    private fun readKeywords(): Pair<List<String>, List<String>> {
+        val raw = prefs.getString("keywords", null) ?: return emptyList<String>() to emptyList()
+        return runCatching {
+            val array = JSONArray(raw)
+            val values = mutableListOf<String>()
+            val wholeWords = mutableListOf<String>()
+            (0 until array.length()).forEach { i ->
+                when (val entry = array.get(i)) {
+                    is String -> values += entry
+                    is JSONObject -> {
+                        val value = entry.optString("v")
+                        if (value.isNotBlank()) {
+                            values += value
+                            if (entry.optBoolean("ww")) wholeWords += value
+                        }
+                    }
+                }
+            }
+            values to wholeWords
+        }.getOrDefault(emptyList<String>() to emptyList())
+    }
+
+    private fun writeKeywords(values: List<String>, wholeWords: List<String>) {
+        val array = JSONArray()
+        values.forEach { value ->
+            if (value in wholeWords) array.put(JSONObject().put("v", value).put("ww", true))
+            else array.put(value)
+        }
+        prefs.edit().putString("keywords", array.toString()).apply()
     }
 
     private fun readList(key: String): List<String> {
@@ -178,47 +290,63 @@ class BlockStore private constructor(context: Context) {
         prefs.edit().putString(key, JSONArray(values).toString()).apply()
     }
 
-    private fun update(block: (Rules) -> Rules) {
-        val next = block(_rules.value)
-        writeRules("names", next.names)
-        writeRules("numbers", next.numbers)
-        writeList("keywords", next.keywords)
-        writeList("allowed", next.allowed)
-        writeCombined(next.combined)
-        prefs.edit().putBoolean("hideMatchedCalls", next.hideMatchedCalls).apply()
-        _rules.value = next
-    }
+    private fun update(block: (Rules) -> Rules) = applyRules(block(_rules.value))
 
-    fun addName(raw: String, scope: Scope = Scope.Both) {
+    fun addScheduledName(raw: String, scope: Scope = Scope.Both, window: TimeWindow? = null) {
         val value = raw.trim()
         if (value.isBlank()) return
         if (value.any { it.isDigit() } && value.count { it.isDigit() } >= 5) {
-            addNumber(value, scope)
+            addScheduledNumber(value, scope, window)
             return
         }
         update { current ->
-            if (current.names.any { it.value.equals(value, ignoreCase = true) && it.scope == scope }) current
-            else current.copy(names = current.names + Rule(value, scope))
+            if (current.names.any {
+                it.value.equals(value, ignoreCase = true) && it.scope == scope && it.window == window
+            }) current
+            else current.copy(names = current.names + Rule(value, scope, window))
         }
     }
 
-    fun addKeyword(raw: String) {
+    fun addName(raw: String, scope: Scope = Scope.Both) = addScheduledName(raw, scope, null)
+
+    fun addKeyword(raw: String, wholeWord: Boolean = false) {
         val value = raw.trim()
         if (value.isBlank()) return
         update { current ->
-            if (current.keywords.any { it.equals(value, ignoreCase = true) }) current
-            else current.copy(keywords = current.keywords + value)
+            val index = current.keywords.indexOfFirst { it.equals(value, ignoreCase = true) }
+            when {
+                index < 0 -> current.copy(
+                    keywords = current.keywords + value,
+                    wholeWordKeywords = if (wholeWord) current.wholeWordKeywords + value else current.wholeWordKeywords,
+                )
+                wholeWord && current.wholeWordKeywords.none { it.equals(value, ignoreCase = true) } ->
+                    current.copy(wholeWordKeywords = current.wholeWordKeywords + current.keywords[index])
+                else -> current
+            }
         }
     }
 
-    fun addNumber(raw: String, scope: Scope = Scope.Both) {
+    /** Flips the whole-word flag on an existing keyword without changing its text. */
+    fun setKeywordWholeWord(value: String, enabled: Boolean) = update { current ->
+        val existing = current.keywords.firstOrNull { it == value } ?: return@update current
+        val has = current.wholeWordKeywords.any { it == existing }
+        if (enabled == has) current
+        else current.copy(
+            wholeWordKeywords = if (enabled) current.wholeWordKeywords + existing
+            else current.wholeWordKeywords - existing,
+        )
+    }
+
+    fun addScheduledNumber(raw: String, scope: Scope = Scope.Both, window: TimeWindow? = null) {
         val value = raw.trim()
         if (value.isBlank()) return
         update { current ->
-            if (current.numbers.any { it.value == value && it.scope == scope }) current
-            else current.copy(numbers = current.numbers + Rule(value, scope))
+            if (current.numbers.any { it.value == value && it.scope == scope && it.window == window }) current
+            else current.copy(numbers = current.numbers + Rule(value, scope, window))
         }
     }
+
+    fun addNumber(raw: String, scope: Scope = Scope.Both) = addScheduledNumber(raw, scope, null)
 
     /**
      * A sender the user vouched for. Their texts skip keyword rules; an explicit
@@ -239,7 +367,7 @@ class BlockStore private constructor(context: Context) {
     fun removeNumber(value: String) = update {
         it.copy(numbers = it.numbers.filterNot { rule -> BlockMatcher.sameNumber(rule.value, value) || rule.value == value })
     }
-    fun addCombined(rule: CompoundRule) {
+    fun addScheduledCombined(rule: CompoundRule) {
         val clean = rule.copy(
             conditions = rule.conditions
                 .map { it.copy(value = it.value.trim()) }
@@ -252,9 +380,17 @@ class BlockStore private constructor(context: Context) {
         }
     }
 
+    fun addCombined(rule: CompoundRule) = addScheduledCombined(rule.copy(window = null))
+
     fun removeCombined(rule: CompoundRule) = update { it.copy(combined = it.combined - rule) }
 
-    fun removeKeyword(value: String) = update { it.copy(keywords = it.keywords - value) }
+    /** Removes the keyword and its whole-word flag together, so re-adding it starts clean. */
+    fun removeKeyword(value: String) = update { current ->
+        current.copy(
+            keywords = current.keywords - value,
+            wholeWordKeywords = current.wholeWordKeywords.filterNot { it.equals(value, ignoreCase = true) },
+        )
+    }
     fun removeAllowed(value: String) = update {
         it.copy(allowed = it.allowed.filterNot { entry -> BlockMatcher.sameNumber(entry, value) || entry == value })
     }
@@ -276,8 +412,10 @@ class BlockStore private constructor(context: Context) {
 }
 
 /**
- * Rule evaluation. Order matters: name, then number, then keyword. [channel] is the
+ * Rule evaluation. Order matters: name, then number, then sender-only combined rules,
+ * then the allow-list, then text combined rules, then keywords. [channel] is the
  * surface asking — texts, calls, or null for "this contact is blocked somewhere".
+ * A rule that carries a window is consulted only when [now] falls inside it.
  */
 object BlockMatcher {
 
@@ -287,48 +425,73 @@ object BlockMatcher {
         body: String?,
         rules: BlockStore.Rules,
         channel: Scope? = null,
+        now: LocalDateTime = LocalDateTime.now(),
     ): RuleHit? {
         // Emergencies always go through, whatever the rules say.
         if (!address.isNullOrBlank() && isEmergency(address)) return null
         val label = name?.trim().orEmpty()
         if (label.isNotBlank()) {
-            rules.names.firstOrNull { it.scope.covers(channel) && label.contains(it.value, ignoreCase = true) }
-                ?.let { rule -> return RuleHit(RuleHit.Kind.NAME, rule.value, scope = rule.scope) }
+            rules.names.firstOrNull {
+                it.scope.covers(channel) && it.window.allows(now) && label.contains(it.value, ignoreCase = true)
+            }?.let { rule -> return RuleHit(RuleHit.Kind.NAME, rule.value, scope = rule.scope) }
         }
         if (!address.isNullOrBlank()) {
-            rules.numbers.firstOrNull { it.scope.covers(channel) && sameNumber(it.value, address) }
+            rules.numbers.firstOrNull { it.scope.covers(channel) && it.window.allows(now) && sameNumber(it.value, address) }
                 ?.let { rule -> return RuleHit(RuleHit.Kind.NUMBER, rule.value, scope = rule.scope) }
         }
         // Combined rules that only look at the sender are as firm as a name or number rule.
-        rules.senderCombined.firstOrNull { it.scope.covers(channel) && holds(it, label, address, body) }
-            ?.let { rule ->
-                return RuleHit(
-                    RuleHit.Kind.COMBO,
-                    rule.summary,
-                    detail = explanation(rule, label, address, body),
-                    scope = rule.scope,
-                )
-            }
+        rules.senderCombined.firstOrNull {
+            it.scope.covers(channel) && it.window.allows(now) && holds(it, label, address, body)
+        }?.let { rule ->
+            return RuleHit(
+                RuleHit.Kind.COMBO,
+                rule.summary,
+                detail = explanation(rule, label, address, body),
+                scope = rule.scope,
+            )
+        }
 
         // A vouched-for sender keeps their texts; keywords stop applying to them.
         if (!address.isNullOrBlank() && isAllowed(address, rules)) return null
 
-        rules.textCombined.firstOrNull { it.scope.covers(channel) && holds(it, label, address, body) }
-            ?.let { rule ->
-                return RuleHit(
-                    RuleHit.Kind.COMBO_TEXT,
-                    rule.summary,
-                    detail = explanation(rule, label, address, body),
-                    scope = rule.scope,
-                )
-            }
+        rules.textCombined.firstOrNull {
+            it.scope.covers(channel) && it.window.allows(now) && holds(it, label, address, body)
+        }?.let { rule ->
+            return RuleHit(
+                RuleHit.Kind.COMBO_TEXT,
+                rule.summary,
+                detail = explanation(rule, label, address, body),
+                scope = rule.scope,
+            )
+        }
 
         if (!body.isNullOrBlank()) {
             val haystack = body.lowercase()
-            val hit = rules.lowerKeywords.indexOfFirst { haystack.contains(it) }
+            val hit = rules.lowerKeywords.indexOfFirst { keyword ->
+                if (keyword in rules.lowerWholeWords) containsWholeWord(haystack, keyword)
+                else haystack.contains(keyword)
+            }
             if (hit >= 0) return RuleHit(RuleHit.Kind.KEYWORD, rules.keywords[hit])
         }
         return null
+    }
+
+    /** A null window — the common case and every legacy rule — always applies. */
+    private fun TimeWindow?.allows(now: LocalDateTime): Boolean = this == null || contains(now)
+
+    /** Case-insensitive substring match with a non-letter/digit boundary on both sides. */
+    private fun containsWholeWord(haystack: String, needle: String): Boolean {
+        if (needle.isEmpty()) return false
+        var from = 0
+        while (true) {
+            val at = haystack.indexOf(needle, from)
+            if (at < 0) return false
+            val end = at + needle.length
+            val leftOk = at == 0 || !haystack[at - 1].isLetterOrDigit()
+            val rightOk = end == haystack.length || !haystack[end].isLetterOrDigit()
+            if (leftOk && rightOk) return true
+            from = at + 1
+        }
     }
 
     /** AND needs every condition true, OR needs one; an empty rule never holds. */
@@ -372,23 +535,61 @@ object BlockMatcher {
         return digits.isNotEmpty() && digits.length <= 4 && emergencyNumbers.contains(digits)
     }
 
-    /** Compares the last 8 digits so +92 300 7712008 matches 0300-7712008. */
+    /**
+     * Compares the last 8 digits so +92 300 7712008 matches 0300-7712008. When the
+     * rule contains a wildcard it is matched as a digit glob instead: `*` is any run
+     * of digits and `?` is exactly one. Patterns need at least five literal digits,
+     * otherwise they are rejected rather than trusted with a real incoming message.
+     * Allow-list and dedupe callers pass plain numbers and keep the suffix behaviour.
+     */
     fun sameNumber(rule: String, address: String): Boolean {
-        val ruleDigits = rule.count { it.isDigit() }
-        val addressDigits = address.count { it.isDigit() }
-        if (ruleDigits < 5 || addressDigits < 5) return false
-        // Walk both strings from the end, one digit at a time, instead of building
-        // filtered copies: this runs for every message against every number rule, and
-        // for every unnamed call against every saved contact.
-        var i = rule.length - 1
-        var j = address.length - 1
-        repeat(minOf(ruleDigits, addressDigits, 8)) {
-            while (!rule[i].isDigit()) i--
-            while (!address[j].isDigit()) j--
-            if (rule[i] != address[j]) return false
-            i--
-            j--
+        if (!rule.contains('*') && !rule.contains('?')) {
+            val ruleDigits = rule.count { it.isDigit() }
+            val addressDigits = address.count { it.isDigit() }
+            if (ruleDigits < 5 || addressDigits < 5) return false
+            // Walk both strings from the end, one digit at a time, instead of building
+            // filtered copies: this runs for every message against every number rule, and
+            // for every unnamed call against every saved contact.
+            var i = rule.length - 1
+            var j = address.length - 1
+            repeat(minOf(ruleDigits, addressDigits, 8)) {
+                while (!rule[i].isDigit()) i--
+                while (!address[j].isDigit()) j--
+                if (rule[i] != address[j]) return false
+                i--
+                j--
+            }
+            return true
         }
-        return true
+        if (rule.count { it.isDigit() } < 5) return false
+        val pattern = rule.filter { it.isDigit() || it == '*' || it == '?' }
+        val digits = address.filter { it.isDigit() }
+        if (digits.length < 5) return false
+        return wildcardMatch(pattern, digits)
+    }
+
+    /** Linear glob over a digit-only text: `?` consumes one digit, `*` consumes a run. */
+    private fun wildcardMatch(pattern: String, text: String): Boolean {
+        var p = 0
+        var t = 0
+        var star = -1
+        var mark = 0
+        while (t < text.length) {
+            if (p < pattern.length && (pattern[p] == '?' || pattern[p] == text[t])) {
+                p++
+                t++
+            } else if (p < pattern.length && pattern[p] == '*') {
+                star = p
+                mark = t
+                p++
+            } else if (star != -1) {
+                p = star + 1
+                t = ++mark
+            } else {
+                return false
+            }
+        }
+        while (p < pattern.length && pattern[p] == '*') p++
+        return p == pattern.length
     }
 }
