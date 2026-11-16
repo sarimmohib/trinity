@@ -87,6 +87,7 @@ import com.sarim.trinity.ui.components.SendButton
 import com.sarim.trinity.ui.components.SimChip
 import com.sarim.trinity.ui.components.SimSheet
 import com.sarim.trinity.ui.theme.Palette
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -101,6 +102,7 @@ private sealed interface ThreadRow {
 fun ThreadScreen(
     state: TrinityState,
     conversation: Conversation,
+    highlightId: Long? = null,
     onBack: () -> Unit,
     onBlocking: () -> Unit,
     onNewContact: (String) -> Unit,
@@ -171,6 +173,18 @@ fun ThreadScreen(
     LaunchedEffect(rows.size) {
         if (rows.isNotEmpty() && stickToBottom) {
             listState.scrollToItem(rows.lastIndex)
+        }
+    }
+    // A search result opens its thread with the matching message flashed once.
+    var flashedId by remember { mutableStateOf<Long?>(null) }
+    LaunchedEffect(highlightId, rows) {
+        if (highlightId == null) return@LaunchedEffect
+        val index = rows.indexOfFirst { it is ThreadRow.Msg && it.message.id == highlightId }
+        if (index >= 0) {
+            listState.animateScrollToItem(index)
+            flashedId = highlightId
+            delay(1200)
+            flashedId = null
         }
     }
 
@@ -272,6 +286,13 @@ fun ThreadScreen(
                             is ThreadRow.Msg -> {
                                 val message = row.message
                                 val hidden = message.rule != null && !state.revealed.contains(message.id)
+                                Box(
+                                    Modifier.fillMaxWidth().then(
+                                        if (flashedId == message.id) {
+                                            Modifier.border(1.dp, Palette.Accents[1], RoundedCornerShape(10.dp))
+                                        } else Modifier,
+                                    ),
+                                ) {
                                 if (hidden) {
                                     HiddenMessageCard(
                                         message = message,
@@ -306,6 +327,7 @@ fun ThreadScreen(
                                             },
                                         )
                                     }
+                                }
                                 }
                             }
                         }

@@ -293,21 +293,35 @@ object BlockMatcher {
         val label = name?.trim().orEmpty()
         if (label.isNotBlank()) {
             rules.names.firstOrNull { it.scope.covers(channel) && label.contains(it.value, ignoreCase = true) }
-                ?.let { return RuleHit(RuleHit.Kind.NAME, it.value) }
+                ?.let { rule -> return RuleHit(RuleHit.Kind.NAME, rule.value, scope = rule.scope) }
         }
         if (!address.isNullOrBlank()) {
             rules.numbers.firstOrNull { it.scope.covers(channel) && sameNumber(it.value, address) }
-                ?.let { return RuleHit(RuleHit.Kind.NUMBER, it.value) }
+                ?.let { rule -> return RuleHit(RuleHit.Kind.NUMBER, rule.value, scope = rule.scope) }
         }
         // Combined rules that only look at the sender are as firm as a name or number rule.
         rules.senderCombined.firstOrNull { it.scope.covers(channel) && holds(it, label, address, body) }
-            ?.let { return RuleHit(RuleHit.Kind.COMBO, it.summary) }
+            ?.let { rule ->
+                return RuleHit(
+                    RuleHit.Kind.COMBO,
+                    rule.summary,
+                    detail = explanation(rule, label, address, body),
+                    scope = rule.scope,
+                )
+            }
 
         // A vouched-for sender keeps their texts; keywords stop applying to them.
         if (!address.isNullOrBlank() && isAllowed(address, rules)) return null
 
         rules.textCombined.firstOrNull { it.scope.covers(channel) && holds(it, label, address, body) }
-            ?.let { return RuleHit(RuleHit.Kind.COMBO_TEXT, it.summary) }
+            ?.let { rule ->
+                return RuleHit(
+                    RuleHit.Kind.COMBO_TEXT,
+                    rule.summary,
+                    detail = explanation(rule, label, address, body),
+                    scope = rule.scope,
+                )
+            }
 
         if (!body.isNullOrBlank()) {
             val haystack = body.lowercase()
@@ -322,6 +336,22 @@ object BlockMatcher {
         if (rule.conditions.isEmpty()) return false
         val test = { c: Condition -> satisfied(c, label, address, body) }
         return if (rule.match == Match.All) rule.conditions.all(test) else rule.conditions.any(test)
+    }
+
+    /**
+     * An AND rule's whole summary already names every condition, so it needs no
+     * explanation. An OR rule did not necessarily fire all of them — say which one
+     * actually matched, in the same `FIELD "value"` form the summary uses.
+     */
+    private fun explanation(
+        rule: CompoundRule,
+        label: String,
+        address: String?,
+        body: String?,
+    ): String? {
+        if (rule.match != Match.Any) return null
+        val fired = rule.conditions.firstOrNull { satisfied(it, label, address, body) } ?: return null
+        return "${fired.field.label} \"${fired.value}\""
     }
 
     private fun satisfied(c: Condition, label: String, address: String?, body: String?): Boolean =

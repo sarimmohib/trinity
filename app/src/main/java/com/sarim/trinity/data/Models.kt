@@ -163,6 +163,10 @@ data class CallEntry(
 data class RuleHit(
     val kind: Kind,
     val value: String,
+    /** For an OR rule, the one condition that actually fired. AND rules keep the full [value]. */
+    val detail: String? = null,
+    /** The surface the matched rule was scoped to, when it carried one. */
+    val scope: Scope? = null,
 ) {
     /**
      * COMBO is an AND/OR rule that only looks at who the sender is, so it hides a
@@ -176,10 +180,15 @@ data class RuleHit(
         get() = kind == Kind.NAME || kind == Kind.NUMBER || kind == Kind.COMBO
 
     val label: String
-        get() = when (kind) {
-            Kind.NAME -> "NAME RULE"
-            Kind.NUMBER -> "NUMBER RULE"
-            Kind.KEYWORD -> "KEYWORD RULE"
-            Kind.COMBO, Kind.COMBO_TEXT -> "COMBINED RULE"
+        get() {
+            val base = when (kind) {
+                Kind.NAME -> "NAME RULE"
+                Kind.NUMBER -> "NUMBER RULE"
+                Kind.KEYWORD -> "KEYWORD RULE"
+                Kind.COMBO, Kind.COMBO_TEXT -> "COMBINED RULE"
+            }
+            // Keep the familiar label, and say which condition fired when the rule
+            // engine reported one: COMBINED RULE · NAME "bank" OR TEXT "otp".
+            return if (detail.isNullOrBlank()) base else "$base · $detail"
         }
 }

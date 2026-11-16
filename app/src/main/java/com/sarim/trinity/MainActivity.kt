@@ -71,6 +71,7 @@ import com.sarim.trinity.ui.screens.MessagesScreen
 import com.sarim.trinity.ui.screens.NewContactScreen
 import com.sarim.trinity.ui.screens.NewMessageScreen
 import com.sarim.trinity.ui.screens.PersonScreen
+import com.sarim.trinity.ui.screens.SearchScreen
 import com.sarim.trinity.ui.screens.SettingsScreen
 import com.sarim.trinity.ui.screens.ThreadScreen
 import com.sarim.trinity.sms.MessageNotifier
@@ -133,7 +134,7 @@ class MainActivity : ComponentActivity() {
 
 private sealed interface Route {
     data class Tab(val index: Int) : Route
-    data class Thread(val conversation: Conversation) : Route
+    data class Thread(val conversation: Conversation, val highlightId: Long? = null) : Route
     data class Contact(val person: Person) : Route
     data class NewContact(val number: String = "", val editing: Person? = null) : Route
     data class NewMessage(val to: String = "", val body: String = "") : Route
@@ -141,6 +142,7 @@ private sealed interface Route {
     data object Held : Route
     data object Dialpad : Route
     data object Settings : Route
+    data object Search : Route
     data class CallDetail(val entry: CallEntry) : Route
 }
 
@@ -173,7 +175,7 @@ private fun TrinityApp(
     fun parentOf(current: Route): Route = when (current) {
         is Route.CallDetail, Route.Dialpad -> Route.Tab(0)
         is Route.Contact, is Route.NewContact -> Route.Tab(2)
-        Route.Settings, Route.Blocking, Route.Held -> Route.Tab(state.startTab)
+        Route.Settings, Route.Blocking, Route.Held, Route.Search -> Route.Tab(state.startTab)
         else -> Route.Tab(1)
     }
 
@@ -253,18 +255,21 @@ private fun TrinityApp(
                         state = state,
                         onOpenDialpad = { go(Route.Dialpad) },
                         onOpenDetail = { go(Route.CallDetail(it)) },
+                        onSearch = { go(Route.Search) },
                         onBlocking = { go(Route.Blocking) },
                         onSettings = { go(Route.Settings) },
                     )
                     2 -> ContactsScreen(
                         state = state,
                         onOpenPerson = { go(Route.Contact(it)) },
+                        onSearch = { go(Route.Search) },
                         onNewContact = { go(Route.NewContact()) },
                         onSettings = { go(Route.Settings) },
                     )
                     else -> MessagesScreen(
                         state = state,
                         onOpenThread = { go(Route.Thread(it)) },
+                        onSearch = { go(Route.Search) },
                         onNewMessage = { go(Route.NewMessage()) },
                         onNewContact = { go(Route.NewContact(it)) },
                         onBlocking = { go(Route.Blocking) },
@@ -276,6 +281,7 @@ private fun TrinityApp(
                 is Route.Thread -> ThreadScreen(
                     state = state,
                     conversation = current.conversation,
+                    highlightId = current.highlightId,
                     onBack = { go(Route.Tab(1)) },
                     onBlocking = { go(Route.Blocking) },
                     onNewContact = { go(Route.NewContact(it)) },
@@ -341,6 +347,18 @@ private fun TrinityApp(
                     onBack = { go(Route.Tab(state.startTab)) },
                     onBlocking = { go(Route.Blocking) },
                     onHeld = { go(Route.Held) },
+                )
+
+                Route.Search -> SearchScreen(
+                    state = state,
+                    onBack = { goBack() },
+                    onOpenCall = { go(Route.CallDetail(it)) },
+                    onOpenThread = { threadId, address, highlight ->
+                        state.rememberSearch(state.searchQuery)
+                        state.refresh()
+                        go(Route.Thread(state.conversationFor(threadId, address), highlight))
+                    },
+                    onOpenContact = { go(Route.Contact(it)) },
                 )
             }
         }

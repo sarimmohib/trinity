@@ -1,0 +1,5 @@
+1.2.0
+
+- Added one search field for calls, texts and contacts, with the last five searches kept on the device.
+- Search results open the matching call, conversation or contact; a matched text is highlighted.
+- Blocked items now say which rule condition actually caught them, for combined rules too.

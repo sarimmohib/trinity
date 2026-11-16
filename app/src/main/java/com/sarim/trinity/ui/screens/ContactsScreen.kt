@@ -69,6 +69,7 @@ import kotlinx.coroutines.launch
 fun ContactsScreen(
     state: TrinityState,
     onOpenPerson: (Person) -> Unit,
+    onSearch: () -> Unit,
     onNewContact: () -> Unit,
     onSettings: () -> Unit,
 ) {
@@ -130,6 +131,21 @@ fun ContactsScreen(
                     style = androidx.compose.material3.MaterialTheme.typography.displaySmall,
                     color = Palette.Ink,
                 )
+                Box(
+                    modifier = Modifier
+                        .size(26.dp)
+                        .border(1.dp, Palette.Line, RoundedCornerShape(3.dp))
+                        .clickable(onClickLabel = "Open unified search") { onSearch() },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        Icons.Outlined.Search,
+                        contentDescription = "Search calls, texts and contacts",
+                        tint = Palette.Ink,
+                        modifier = Modifier.size(14.dp),
+                    )
+                }
+                Spacer(Modifier.width(6.dp))
                 Box(
                     modifier = Modifier
                         .size(26.dp)

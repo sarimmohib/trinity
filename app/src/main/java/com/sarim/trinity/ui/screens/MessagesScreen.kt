@@ -24,6 +24,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.FilterAlt
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -70,6 +71,7 @@ import com.sarim.trinity.ui.theme.Palette
 fun MessagesScreen(
     state: TrinityState,
     onOpenThread: (Conversation) -> Unit,
+    onSearch: () -> Unit,
     onNewMessage: () -> Unit,
     onNewContact: (String) -> Unit,
     onBlocking: () -> Unit,
@@ -113,6 +115,7 @@ fun MessagesScreen(
             filtered = hiddenCount,
             heldCount = state.held.size,
             ruleCount = rules.ruleCount,
+            onSearch = onSearch,
             onBlocking = onBlocking,
             onSettings = onSettings,
         )
@@ -315,6 +318,7 @@ private fun MessagesHeader(
     filtered: Int,
     heldCount: Int,
     ruleCount: Int,
+    onSearch: () -> Unit,
     onBlocking: () -> Unit,
     onSettings: () -> Unit,
 ) {
@@ -331,6 +335,21 @@ private fun MessagesHeader(
                     color = Palette.Ink,
                 )
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(26.dp)
+                            .border(1.dp, Palette.Line, RoundedCornerShape(3.dp))
+                            .clickable(onClickLabel = "Open unified search") { onSearch() },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            Icons.Outlined.Search,
+                            contentDescription = "Search calls, texts and contacts",
+                            tint = Palette.Ink,
+                            modifier = Modifier.size(14.dp),
+                        )
+                    }
+                    Spacer(Modifier.width(6.dp))
                     BoxAction("BLOCK $ruleCount", onBlocking)
                     Spacer(Modifier.width(6.dp))
                     Box(

@@ -69,7 +69,7 @@ class BlockMatcherTest {
             keywords = listOf("otp"),
         )
         assertEquals(
-            RuleHit(RuleHit.Kind.NAME, "bank"),
+            RuleHit(RuleHit.Kind.NAME, "bank", scope = Scope.Both),
             BlockMatcher.match("Bank of Stuff", "03007712008", "your otp is 1234", rules),
         )
     }
@@ -83,7 +83,7 @@ class BlockMatcherTest {
             ),
         )
         assertEquals(
-            RuleHit(RuleHit.Kind.NUMBER, "03007712008"),
+            RuleHit(RuleHit.Kind.NUMBER, "03007712008", scope = Scope.Both),
             BlockMatcher.match(null, "03007712008", null, rules),
         )
     }
@@ -97,7 +97,7 @@ class BlockMatcherTest {
             ),
         )
         assertEquals(
-            RuleHit(RuleHit.Kind.COMBO, "NUMBER \"03007712008\""),
+            RuleHit(RuleHit.Kind.COMBO, "NUMBER \"03007712008\"", scope = Scope.Both),
             BlockMatcher.match(null, "03007712008", null, rules),
         )
     }
@@ -122,7 +122,7 @@ class BlockMatcherTest {
             ),
         )
         assertEquals(
-            RuleHit(RuleHit.Kind.COMBO_TEXT, "TEXT \"otp\""),
+            RuleHit(RuleHit.Kind.COMBO_TEXT, "TEXT \"otp\"", scope = Scope.Both),
             BlockMatcher.match(null, "03007712008", "your otp is 1234", rules),
         )
     }
@@ -151,7 +151,7 @@ class BlockMatcherTest {
         val rules = BlockStore.Rules(numbers = listOf(Rule("03007712008", Scope.Calls)))
         assertNull(BlockMatcher.match(null, "03007712008", null, rules, Scope.Texts))
         assertEquals(
-            RuleHit(RuleHit.Kind.NUMBER, "03007712008"),
+            RuleHit(RuleHit.Kind.NUMBER, "03007712008", scope = Scope.Calls),
             BlockMatcher.match(null, "03007712008", null, rules, Scope.Calls),
         )
     }
@@ -168,7 +168,11 @@ class BlockMatcherTest {
         )
         assertNull(BlockMatcher.match("Bank", "03009998888", null, rules))
         assertEquals(
-            RuleHit(RuleHit.Kind.COMBO, "NAME \"bank\" AND NUMBER \"03007712008\""),
+            RuleHit(
+                RuleHit.Kind.COMBO,
+                "NAME \"bank\" AND NUMBER \"03007712008\"",
+                scope = Scope.Both,
+            ),
             BlockMatcher.match("Bank", "03007712008", null, rules),
         )
     }
@@ -184,7 +188,12 @@ class BlockMatcherTest {
             ),
         )
         assertEquals(
-            RuleHit(RuleHit.Kind.COMBO, "NAME \"bank\" OR NUMBER \"03007712008\""),
+            RuleHit(
+                RuleHit.Kind.COMBO,
+                "NAME \"bank\" OR NUMBER \"03007712008\"",
+                detail = "NUMBER \"03007712008\"",
+                scope = Scope.Both,
+            ),
             BlockMatcher.match("Unknown", "03007712008", null, rules),
         )
     }

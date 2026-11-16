@@ -27,6 +27,7 @@ import com.sarim.trinity.data.ContactsRepository
 import com.sarim.trinity.data.Conversation
 import com.sarim.trinity.data.isMmsMessageId
 import com.sarim.trinity.data.Message
+import com.sarim.trinity.data.MessageHit
 import com.sarim.trinity.data.MessageState
 import com.sarim.trinity.data.MessagesRepository
 import com.sarim.trinity.data.PendingMessage
@@ -34,6 +35,7 @@ import com.sarim.trinity.data.Person
 import com.sarim.trinity.data.QuarantineStore
 import com.sarim.trinity.data.Release
 import com.sarim.trinity.data.Scope
+import com.sarim.trinity.data.Search
 import com.sarim.trinity.data.SimCard
 import com.sarim.trinity.data.Sims
 import com.sarim.trinity.data.SmsStore
@@ -47,8 +49,11 @@ import com.sarim.trinity.sms.holdsSmsRole
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
 
 /**
  * One holder for everything the screens read. Deliberately plain: no DI, no
@@ -68,6 +73,67 @@ class TrinityState(private val context: Context, private val scope: CoroutineSco
         context.applicationContext.getSharedPreferences("trinity.sims", Context.MODE_PRIVATE)
     private val uiPrefs =
         context.applicationContext.getSharedPreferences("trinity.ui", Context.MODE_PRIVATE)
+
+    // --- unified search (M2) ---
+
+    data class SearchResults(
+        val messages: List<MessageHit> = emptyList(),
+        val calls: List<CallEntry> = emptyList(),
+        val contacts: List<Person> = emptyList(),
+    )
+
+    var searchQuery by mutableStateOf("")
+    var searchResults by mutableStateOf(SearchResults())
+    var recentSearches by mutableStateOf(readRecentSearches())
+
+    private var searchJob: Job? = null
+
+    /**
+     * Debounced provider work for the unified search field. A query shorter than
+     * three characters clears the results instead of querying: number matching on
+     * a digit or two would match almost every row in the phone's stores.
+     */
+    fun updateSearch(query: String) {
+        searchQuery = query
+        searchJob?.cancel()
+        val needle = query.trim()
+        if (needle.length < 3) {
+            searchResults = SearchResults()
+            return
+        }
+        searchJob = scope.launch {
+            delay(150)
+            val rules = blockStore.rules.value
+            val names = contacts.associate { it.number to it.name }
+            val found = withContext(Dispatchers.IO) {
+                SearchResults(
+                    messages = Search.messages(context, needle, rules, names),
+                    calls = Search.calls(needle, calls),
+                    contacts = Search.contacts(needle, contacts),
+                )
+            }
+            // A newer keystroke replaced this job while the providers were being read.
+            if (isActive) searchResults = found
+        }
+    }
+
+    /** Keeps the last five submitted queries, most recent first, in trinity.ui. */
+    fun rememberSearch(query: String) {
+        val value = query.trim()
+        if (value.length < 3) return
+        val updated = buildList {
+            add(value)
+            recentSearches.filterNot { it.equals(value, ignoreCase = true) }.forEach { add(it) }
+        }.take(5)
+        recentSearches = updated
+        uiPrefs.edit().putString("recent_searches", JSONArray(updated).toString()).apply()
+    }
+
+    private fun readRecentSearches(): List<String> = runCatching {
+        val raw = uiPrefs.getString("recent_searches", null) ?: return@runCatching emptyList()
+        val array = JSONArray(raw)
+        (0 until array.length()).map { array.getString(it) }.filter { it.isNotBlank() }.take(5)
+    }.getOrDefault(emptyList())
 
     /** Which tab opens first. Calls until the user picks another in Settings. */
     var startTab by mutableStateOf(uiPrefs.getInt("start_tab", 0))

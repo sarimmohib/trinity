@@ -64,6 +64,7 @@ import com.sarim.trinity.ui.components.SelectionBar
 import com.sarim.trinity.ui.components.SelectionMark
 import com.sarim.trinity.ui.components.InkSheet
 import com.sarim.trinity.ui.components.SheetAction
+import androidx.compose.material.icons.outlined.Search
 import com.sarim.trinity.ui.dayKey
 import com.sarim.trinity.ui.dayLabel
 import com.sarim.trinity.ui.formatNumber
@@ -89,6 +90,7 @@ fun CallsScreen(
     state: TrinityState,
     onOpenDialpad: () -> Unit,
     onOpenDetail: (CallEntry) -> Unit,
+    onSearch: () -> Unit,
     onBlocking: () -> Unit,
     onSettings: () -> Unit,
 ) {
@@ -173,6 +175,15 @@ fun CallsScreen(
                 Spacer(Modifier.width(10.dp))
                 MonoLabel("CLEAR", color = Palette.Ink, size = 8, modifier = Modifier.clickable { query = "" })
             }
+            Spacer(Modifier.width(8.dp))
+            Icon(
+                Icons.Outlined.Search,
+                contentDescription = "Search calls, texts and contacts",
+                tint = Palette.Ink,
+                modifier = Modifier
+                    .size(20.dp)
+                    .clickable(onClickLabel = "Open unified search") { onSearch() },
+            )
         }
 
         if (copied != null) {
