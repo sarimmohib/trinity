@@ -144,7 +144,7 @@ private fun TrinityApp(
     val state = remember { TrinityState(context, scope) }
 
     var granted by remember { mutableStateOf(state.hasCorePermissions()) }
-    var route by remember { mutableStateOf<Route>(Route.Tab(1)) }
+    var route by remember { mutableStateOf<Route>(Route.Tab(state.startTab)) }
 
     // Back mirrors the way in: the stack is pushed on every step inward, so the
     // gesture undoes the last one (Held → Blocking → tab) instead of guessing.
@@ -162,6 +162,7 @@ private fun TrinityApp(
     fun parentOf(current: Route): Route = when (current) {
         is Route.CallDetail, Route.Dialpad -> Route.Tab(0)
         is Route.Contact, is Route.NewContact -> Route.Tab(2)
+        Route.Settings, Route.Blocking, Route.Held -> Route.Tab(state.startTab)
         else -> Route.Tab(1)
     }
 
@@ -288,7 +289,7 @@ private fun TrinityApp(
 
                 Route.Blocking -> BlockingScreen(
                     state = state,
-                    onBack = { go(Route.Tab(1)) },
+                    onBack = { go(Route.Tab(state.startTab)) },
                     onHeld = { go(Route.Held) },
                 )
 
@@ -313,7 +314,7 @@ private fun TrinityApp(
 
                 Route.Settings -> SettingsScreen(
                     state = state,
-                    onBack = { go(Route.Tab(1)) },
+                    onBack = { go(Route.Tab(state.startTab)) },
                     onBlocking = { go(Route.Blocking) },
                     onHeld = { go(Route.Held) },
                 )

@@ -92,6 +92,13 @@ class UpdateChecker(context: Context) {
     fun due(now: Long = System.currentTimeMillis()): Boolean =
         now - prefs.getLong("checkedAt", 0L) > CHECK_EVERY_MS
 
+    /** Opt-in only: no automatic request is made until the user turns this on. */
+    fun autoCheck(): Boolean = prefs.getBoolean("auto_check", false)
+
+    fun setAutoCheck(enabled: Boolean) {
+        prefs.edit().putBoolean("auto_check", enabled).apply()
+    }
+
     fun isSkipped(version: String): Boolean = prefs.getString("skipped", null) == version
 
     fun skip(version: String) {

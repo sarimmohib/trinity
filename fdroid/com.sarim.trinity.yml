@@ -14,14 +14,9 @@ Categories:
 License: MIT
 AuthorName: Sarim Mohib
 
-# The app checks GitHub for a newer release on launch, without asking first.
-# F-Droid's anti-feature list counts "checking for updates without your
-# knowledge or permission" as Tracking, so a reviewer will most likely ask for
-# either this line or an opt-in switch. Comment it in if the check stays
-# automatic; leave it out once the check only runs when the user asks for it.
-#
-# AntiFeatures:
-#   - Tracking
+# Update checks are opt-in: "Check on launch" is off by default, and the app
+# makes no request to GitHub until the user asks. The Tracking anti-feature is
+# therefore intentionally not declared.
 
 SourceCode: https://github.com/sarimmohib/trinity
 IssueTracker: https://github.com/sarimmohib/trinity/issues
@@ -33,9 +28,9 @@ RepoType: git
 Repo: https://github.com/sarimmohib/trinity.git
 
 Builds:
-  - versionName: 1.0.0
-    versionCode: 1
-    commit: v1.0.0
+  - versionName: 1.0.1
+    versionCode: 2
+    commit: v1.0.1
     output: app/build/outputs/apk/release/app-release.apk
     gradle:
       - yes

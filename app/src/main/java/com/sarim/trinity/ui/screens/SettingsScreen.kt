@@ -81,6 +81,7 @@ fun SettingsScreen(
     var confirm by remember { mutableStateOf<String?>(null) }
     var simSheet by remember { mutableStateOf(false) }
     var themeSheet by remember { mutableStateOf(false) }
+    var startTabSheet by remember { mutableStateOf(false) }
 
     fun open(intent: Intent) = runCatching { context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
 
@@ -250,6 +251,19 @@ fun SettingsScreen(
             onClick = { open(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
         )
 
+        SettingsSection("STARTUP")
+        SettingsRow(
+            label = "Start on",
+            value = when (state.startTab) {
+                0 -> "CALLS"
+                1 -> "MESSAGES"
+                else -> "CONTACTS"
+            },
+            sub = "FIRST SCREEN WHEN TRINITY OPENS",
+            icon = Icons.Outlined.Phone,
+            onClick = { startTabSheet = true },
+        )
+
         SettingsSection("CONTACTS")
         SettingsRow(
             label = "Import from file",
@@ -299,12 +313,25 @@ fun SettingsScreen(
             value = BuildConfig.VERSION_NAME,
             sub = if (BuildConfig.BUILD_TYPE == "release") "RELEASE BUILD" else "DEBUG BUILD",
         )
+        SettingsSection("CHECK FOR UPDATES")
+        SettingsRow(
+            label = "Check on launch",
+            sub = if (state.autoUpdateCheck) {
+                "ASKS GITHUB WHEN TRINITY OPENS"
+            } else {
+                "OFF · CHECK ONLY WHEN ASKED"
+            },
+            icon = Icons.Outlined.FileDownload,
+            toggle = state.autoUpdateCheck,
+            onToggle = { state.setUpdateCheckOnLaunch(it) },
+        )
         SettingsRow(
             label = if (state.availableUpdate != null) "Update available" else "Check for updates",
             value = state.availableUpdate?.version,
             sub = when {
                 state.checkingUpdate -> "CHECKING GITHUB…"
                 state.updateNote != null -> state.updateNote!!.uppercase()
+                !state.autoUpdateCheck -> "MANUAL CHECK · NO BACKGROUND REQUESTS"
                 else -> "COMPARES WITH THE LATEST GITHUB RELEASE"
             },
             icon = Icons.Outlined.FileDownload,
@@ -367,6 +394,24 @@ fun SettingsScreen(
                 ) { ThemePrefs.setBrightness(context, Brightness.Dark) },
             ),
             onDismiss = { themeSheet = false },
+        )
+    }
+
+    if (startTabSheet) {
+        InkSheet(
+            title = "START ON",
+            actions = listOf(
+                SheetAction("Calls", if (state.startTab == 0) "ON" else null) {
+                    state.selectStartTab(0)
+                },
+                SheetAction("Messages", if (state.startTab == 1) "ON" else null) {
+                    state.selectStartTab(1)
+                },
+                SheetAction("Contacts", if (state.startTab == 2) "ON" else null) {
+                    state.selectStartTab(2)
+                },
+            ),
+            onDismiss = { startTabSheet = false },
         )
     }
 

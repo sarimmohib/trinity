@@ -65,6 +65,18 @@ class TrinityState(private val context: Context, private val scope: CoroutineSco
     private val threadPrefs = ThreadPrefs(context)
     private val simPrefs =
         context.applicationContext.getSharedPreferences("trinity.sims", Context.MODE_PRIVATE)
+    private val uiPrefs =
+        context.applicationContext.getSharedPreferences("trinity.ui", Context.MODE_PRIVATE)
+
+    /** Which tab opens first. Calls until the user picks another in Settings. */
+    var startTab by mutableStateOf(uiPrefs.getInt("start_tab", 0))
+        private set
+
+    fun selectStartTab(index: Int) {
+        val tab = index.coerceIn(0, 2)
+        startTab = tab
+        uiPrefs.edit().putInt("start_tab", tab).apply()
+    }
 
     var contacts by mutableStateOf<List<Person>>(emptyList())
         private set
@@ -705,8 +717,32 @@ class TrinityState(private val context: Context, private val scope: CoroutineSco
     var updateNote by mutableStateOf<String?>(null)
         private set
 
-    /** On launch: show what was found before, then look again if it has been a while. */
+    /** Off by default: Trinity never contacts GitHub unless the user asks for it. */
+    var autoUpdateCheck by mutableStateOf(updates.autoCheck())
+        private set
+
+    fun setUpdateCheckOnLaunch(enabled: Boolean) {
+        autoUpdateCheck = enabled
+        updates.setAutoCheck(enabled)
+        if (!enabled) {
+            availableUpdate = null
+            updateOverlay = false
+            updateNote = null
+            UpdateNotifier.cancel(context)
+        }
+    }
+
+    /**
+     * On launch, only when the user opted in: show what was found before, then look
+     * again if it has been a while. With the switch off nothing here touches the network.
+     */
     fun startUpdateWatch() {
+        if (!autoUpdateCheck) {
+            availableUpdate = null
+            updateOverlay = false
+            UpdateNotifier.cancel(context)
+            return
+        }
         val known = updates.cached()
         if (known != null) {
             availableUpdate = known
