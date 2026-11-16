@@ -28,9 +28,9 @@ RepoType: git
 Repo: https://github.com/sarimmohib/trinity.git
 
 Builds:
-  - versionName: 1.1.0
-    versionCode: 4
-    commit: 0335d3e557d05930867112e55a1d888a0dff9c05
+  - versionName: 1.2.0
+    versionCode: 5
+    commit: 52ac7c1e35f11a45d3e6e4fe2571ccf8ac4ec1e0
     output: app/build/outputs/apk/release/app-release.apk
     gradle:
       - yes
