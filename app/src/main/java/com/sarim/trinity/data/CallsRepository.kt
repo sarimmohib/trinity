@@ -10,6 +10,12 @@ import kotlinx.coroutines.withContext
 
 class CallsRepository(private val context: Context) {
 
+    /**
+     * The call log is re-read on every tab visit. Only real rule hits are audited, and
+     * [AuditStore] collapses an identical decision seen again within a minute, so a
+     * refresh does not duplicate rows. Rules added later are picked up on the next load.
+     */
+
     fun hasPermission(): Boolean =
         ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALL_LOG) ==
             PackageManager.PERMISSION_GRANTED
@@ -32,6 +38,7 @@ class CallsRepository(private val context: Context) {
         val sims = Sims(context)
         if (!hasPermission()) return@withContext emptyList()
         val out = ArrayList<CallEntry>()
+        val pendingAudit = ArrayList<AuditStore.Entry>()
         val projection = arrayOf(
             CallLog.Calls._ID,
             CallLog.Calls.NUMBER,
@@ -55,6 +62,7 @@ class CallsRepository(private val context: Context) {
                     val type = cursor.getInt(3)
                     val name = cached?.takeIf { it.isNotBlank() } ?: nameFor(number, names)
                     val account = runCatching { cursor.getString(6) }.getOrNull()
+                    val hit = BlockMatcher.match(name, number, null, rules, Scope.Calls)
                     out += CallEntry(
                         id = cursor.getLong(0),
                         number = number,
@@ -64,11 +72,28 @@ class CallsRepository(private val context: Context) {
                             type == CallLog.Calls.REJECTED_TYPE,
                         date = cursor.getLong(4),
                         durationSeconds = cursor.getLong(5),
-                        rule = BlockMatcher.match(name, number, null, rules, Scope.Calls),
+                        rule = hit,
                         simLabel = sims.labelForAccount(account, cards),
                     )
+                    // Only a real rule decision is worth an audit row. Logging every
+                    // allowed call would fill the 500-entry cap with noise on each refresh.
+                    if (hit != null) {
+                        pendingAudit += AuditStore.Entry(
+                            at = System.currentTimeMillis(),
+                            kind = "CALL",
+                            decision = "BLOCKED",
+                            address = number,
+                            rule = hit.kind.name,
+                            scope = hit.scope?.name ?: "-",
+                        )
+                    }
                 }
             }
+        }
+        // AuditStore collapses an identical decision seen again within a short window,
+        // so a refresh does not duplicate rows even though load() runs often.
+        pendingAudit.forEach { entry ->
+            runCatching { AuditStore(context).record(entry) }
         }
         out
     }

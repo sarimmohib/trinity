@@ -8,6 +8,7 @@ import android.os.Looper
 import android.provider.Telephony
 import com.sarim.trinity.data.BlockMatcher
 import com.sarim.trinity.data.BlockStore
+import com.sarim.trinity.data.AuditStore
 import com.sarim.trinity.data.QuarantineStore
 import com.sarim.trinity.data.Scope
 import com.sarim.trinity.mms.pdu.NotificationInd
@@ -78,6 +79,19 @@ class MmsReceiver : BroadcastReceiver() {
         val hit = BlockMatcher.match(name, address, subject, rules, Scope.Texts)
 
         if (hit != null) {
+            runCatching {
+                AuditStore(context).record(
+                    AuditStore.Entry(
+                        at = System.currentTimeMillis(),
+                        kind = "MMS",
+                        decision = "HELD",
+                        address = address,
+                        // Kind only: never copy the subject (or hit.value) into the audit.
+                        rule = hit.kind.name,
+                        scope = hit.scope?.name ?: "-",
+                    ),
+                )
+            }
             MmsDedupe.remember(context, messageId)
             QuarantineStore(context).add(
                 QuarantineStore.Entry(
@@ -92,6 +106,24 @@ class MmsReceiver : BroadcastReceiver() {
             MessageNotifier.showHeld(context, QuarantineStore(context).all().size)
             finish()
             return
+        }
+
+        // The rule decision is already made here; do not couple the audit to the
+        // download result or the 60-second timeout. Skip it entirely without rules.
+        if (!rules.isEmpty) {
+            runCatching {
+                val allowReason = rules.allowed.firstOrNull { BlockMatcher.sameNumber(it, address) }
+                AuditStore(context).record(
+                    AuditStore.Entry(
+                        at = System.currentTimeMillis(),
+                        kind = "MMS",
+                        decision = "ALLOWED",
+                        address = address,
+                        rule = allowReason ?: "-",
+                        scope = "-",
+                    ),
+                )
+            }
         }
 
         val subscriptionId = intent.getIntExtra(EXTRA_SUBSCRIPTION, -1)

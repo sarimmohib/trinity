@@ -25,6 +25,7 @@ import com.sarim.trinity.MainActivity
 import com.sarim.trinity.R
 import com.sarim.trinity.data.BlockMatcher
 import com.sarim.trinity.data.Scope
+import com.sarim.trinity.data.AuditStore
 import com.sarim.trinity.data.BlockStore
 import com.sarim.trinity.data.QuarantineStore
 import com.sarim.trinity.data.SmsStore
@@ -385,6 +386,20 @@ class SmsDeliverReceiver : BroadcastReceiver() {
         val hit = BlockMatcher.match(name, address, body, rules, Scope.Texts)
 
         if (hit != null) {
+            runCatching {
+                AuditStore(context).record(
+                    AuditStore.Entry(
+                        at = System.currentTimeMillis(),
+                        kind = "SMS",
+                        decision = "HELD",
+                        address = address,
+                        // The kind, not hit.value: a keyword rule's value can equal message
+                        // text, and no audit entry is ever allowed to carry a body.
+                        rule = hit.kind.name,
+                        scope = hit.scope?.name ?: "-",
+                    ),
+                )
+            }
             QuarantineStore(context).add(
                 QuarantineStore.Entry(
                     address = address,
@@ -397,6 +412,24 @@ class SmsDeliverReceiver : BroadcastReceiver() {
             Log.i("Trinity", "quarantined SMS from $address by ${hit.kind} '${hit.value}'")
             MessageNotifier.showHeld(context, QuarantineStore(context).all().size)
             return
+        }
+
+        // Only record an ALLOWED decision when rules exist; otherwise every ordinary
+        // text would fill the audit. The allow-list value is the reason, when there is one.
+        if (!rules.isEmpty) {
+            runCatching {
+                val allowReason = rules.allowed.firstOrNull { BlockMatcher.sameNumber(it, address) }
+                AuditStore(context).record(
+                    AuditStore.Entry(
+                        at = System.currentTimeMillis(),
+                        kind = "SMS",
+                        decision = "ALLOWED",
+                        address = address,
+                        rule = allowReason ?: "-",
+                        scope = "-",
+                    ),
+                )
+            }
         }
 
         val threadId = runCatching {
