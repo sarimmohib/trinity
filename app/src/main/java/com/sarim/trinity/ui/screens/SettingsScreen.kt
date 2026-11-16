@@ -41,6 +41,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -63,6 +64,7 @@ import com.sarim.trinity.ui.components.SheetAction
 import com.sarim.trinity.ui.theme.Palette
 import com.sarim.trinity.ui.theme.Brightness
 import com.sarim.trinity.ui.theme.ThemePrefs
+import kotlinx.coroutines.launch
 
 @Composable
 fun SettingsScreen(
@@ -72,6 +74,7 @@ fun SettingsScreen(
     onHeld: () -> Unit,
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val rules by state.blockStore.rules.collectAsStateWithLifecycle()
     val smsDefault = state.isDefaultSmsApp()
     val dialerDefault = state.isDefaultDialer()
@@ -85,6 +88,8 @@ fun SettingsScreen(
     var themeSheet by remember { mutableStateOf(false) }
     var startTabSheet by remember { mutableStateOf(false) }
     var ruleImportPack by remember { mutableStateOf<RulePack.Pack?>(null) }
+    var restoreUri by remember { mutableStateOf<Uri?>(null) }
+    var restoreCount by remember { mutableStateOf<Int?>(null) }
 
     fun open(intent: Intent) = runCatching { context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
 
@@ -102,6 +107,22 @@ fun SettingsScreen(
     val ruleImportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument(),
     ) { uri -> uri?.let { state.loadRulePack(it) { pack -> ruleImportPack = pack } } }
+
+    val backupLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json"),
+    ) { uri -> uri?.let { state.backupMessages(it) } }
+    val restoreLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri != null) {
+            scope.launch {
+                // The count comes from a full file + provider read, so keep it off main.
+                val count = state.dryRunRestore(uri)
+                restoreCount = count
+                restoreUri = uri
+            }
+        }
+    }
 
     // Role dialogs are opened directly, not through a result launcher: the screen
     // re-reads the role state on ON_RESUME anyway, and a direct start reports a
@@ -253,6 +274,22 @@ fun SettingsScreen(
             },
         )
 
+        SettingsRow(
+            label = "Backup messages",
+            value = "JSON · TEXTS ONLY",
+            icon = Icons.Outlined.Storage,
+            onClick = { backupLauncher.launch("trinity-messages.json") },
+        )
+        SettingsRow(
+            label = "Restore messages",
+            value = "PREVIEW FIRST",
+            icon = Icons.Outlined.Storage,
+            onClick = { restoreLauncher.launch(arrayOf("application/json")) },
+        )
+        state.backupNote?.let { note ->
+            MonoLabel(note, size = 7, color = Palette.Faint, modifier = Modifier.padding(start = 24.dp))
+        }
+
         SettingsSection("APPEARANCE")
         SettingsRow(
             label = "Appearance",
@@ -401,6 +438,30 @@ fun SettingsScreen(
                 lineHeight = 16.sp,
             )
         }
+    }
+
+    if (restoreUri != null) {
+        InkSheet(
+            title = "RESTORE MESSAGES",
+            actions = listOf(
+                SheetAction(
+                    "Add ${restoreCount ?: 0} messages",
+                    "TEXTS ONLY · NO MMS · DUPLICATES SKIPPED",
+                ) {
+                    restoreUri?.let { state.restoreMessages(it) }
+                    restoreUri = null
+                    restoreCount = null
+                },
+                SheetAction("Cancel") {
+                    restoreUri = null
+                    restoreCount = null
+                },
+            ),
+            onDismiss = {
+                restoreUri = null
+                restoreCount = null
+            },
+        )
     }
 
     ruleImportPack?.let { pack ->

@@ -28,10 +28,13 @@ import com.sarim.trinity.data.ContactsRepository
 import com.sarim.trinity.data.Conversation
 import com.sarim.trinity.data.isMmsMessageId
 import com.sarim.trinity.data.Message
+import com.sarim.trinity.data.MessageBackup
 import com.sarim.trinity.data.MessageHit
 import com.sarim.trinity.data.MessageState
 import com.sarim.trinity.data.MessagesRepository
 import com.sarim.trinity.data.PendingMessage
+import com.sarim.trinity.data.ScheduledMessage
+import com.sarim.trinity.data.ScheduledStore
 import com.sarim.trinity.data.Person
 import com.sarim.trinity.data.QuarantineStore
 import com.sarim.trinity.data.Release
@@ -49,6 +52,8 @@ import com.sarim.trinity.data.VCards
 import com.sarim.trinity.sms.MessageNotifier
 import com.sarim.trinity.sms.SmsSender
 import com.sarim.trinity.sms.holdsSmsRole
+import com.sarim.trinity.data.ScheduleDispatcher
+import java.util.UUID
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -73,6 +78,7 @@ class TrinityState(private val context: Context, private val scope: CoroutineSco
     private val quarantine = QuarantineStore(context)
     private val auditStore = AuditStore(context)
     private val threadPrefs = ThreadPrefs(context)
+    private val scheduledStore = ScheduledStore(context)
     private val simPrefs =
         context.applicationContext.getSharedPreferences("trinity.sims", Context.MODE_PRIVATE)
     private val uiPrefs =
@@ -383,6 +389,7 @@ class TrinityState(private val context: Context, private val scope: CoroutineSco
         blockedMessages = messagesRepo.blockedMessages(names, rules)
         held = withContext(Dispatchers.IO) { quarantine.all() }
         openThreadId?.let { id -> messages = messagesRepo.messages(id, rules) }
+        refreshScheduled()
         lastRefreshAt = SystemClock.elapsedRealtime()
         loading = false
     }
@@ -678,6 +685,50 @@ class TrinityState(private val context: Context, private val scope: CoroutineSco
         return (messages + extra).sortedBy { it.date }
     }
 
+    // --- scheduled send (M4) ---
+
+    /** Messages waiting for their send time, mirrored from [ScheduledStore]. */
+    var scheduledItems by mutableStateOf(scheduledStore.all())
+        private set
+
+    fun scheduled(): List<ScheduledMessage> = scheduledItems
+
+    /** Re-reads the pending list so a thread's cards reflect additions and cancellations. */
+    fun refreshScheduled() {
+        scheduledItems = scheduledStore.all()
+    }
+
+    /**
+     * Stores a message and hands it to WorkManager. This deliberately never touches
+     * [sendMessage]: nothing reaches the provider until the scheduled time, and a
+     * cancelled entry must leave no sent row behind.
+     */
+    fun scheduleMessage(
+        address: String,
+        body: String,
+        sendAt: Long,
+        subscriptionId: Int? = selectedSubscription,
+    ) {
+        val text = body.trim()
+        if (text.isBlank()) return
+        val message = ScheduledMessage(
+            id = UUID.randomUUID().toString(),
+            address = address,
+            body = text,
+            sendAt = sendAt,
+            subscriptionId = subscriptionId,
+        )
+        scheduledStore.add(message)
+        ScheduleDispatcher.enqueue(context, message)
+        refreshScheduled()
+    }
+
+    fun cancelScheduled(id: String) {
+        scheduledStore.remove(id)
+        ScheduleDispatcher.cancel(context, id)
+        refreshScheduled()
+    }
+
     fun reveal(messageId: Long) {
         revealed = revealed + messageId
     }
@@ -894,6 +945,50 @@ class TrinityState(private val context: Context, private val scope: CoroutineSco
         blockStore.reload()
         refresh()
         rulePackNote = "IMPORTED ${pack.name.uppercase()}"
+    }
+
+    // --- message backup (M4) ---
+
+    /** Result of the last message export or import, shown once in Settings. */
+    var backupNote by mutableStateOf<String?>(null)
+
+    /** Provider reads and writes need the SMS role; without it, explain and stop. */
+    private fun canTouchMessages(): Boolean {
+        if (isDefaultSmsApp()) return true
+        backupNote = "TRINITY IS NOT THE DEFAULT SMS APP"
+        return false
+    }
+
+    fun backupMessages(uri: Uri) {
+        if (!canTouchMessages()) return
+        scope.launch {
+            val count = withContext(Dispatchers.IO) { MessageBackup.export(context, uri) }
+            backupNote = when {
+                count == null -> "EXPORT FAILED"
+                count > 0 -> "$count MESSAGES EXPORTED"
+                else -> "NOTHING TO EXPORT"
+            }
+        }
+    }
+
+    /** Counts what a restore would add without writing anything. Safe to call from the UI. */
+    suspend fun dryRunRestore(uri: Uri): Int? = withContext(Dispatchers.IO) {
+        runCatching { MessageBackup.dryRun(context, uri) }.getOrNull()
+    }
+
+    fun restoreMessages(uri: Uri, replace: Boolean = false) {
+        if (!canTouchMessages()) return
+        // v1 merges with dedupe on (address, date, type, body). `replace` is accepted
+        // so callers can state their intent, but there is no destructive replace mode.
+        scope.launch {
+            val count = withContext(Dispatchers.IO) { MessageBackup.restore(context, uri) }
+            backupNote = when {
+                count == null -> "RESTORE FAILED"
+                count > 0 -> "$count MESSAGES RESTORED"
+                else -> "NO NEW MESSAGES"
+            }
+            refresh()
+        }
     }
 
     // --- updates ---

@@ -61,12 +61,15 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.sarim.trinity.data.BlockMatcher
 import com.sarim.trinity.data.Conversation
 import com.sarim.trinity.data.Message
 import com.sarim.trinity.data.MessageState
+import com.sarim.trinity.data.ScheduledMessage
 import com.sarim.trinity.mms.MmsAddresses
 import com.sarim.trinity.ui.TrinityState
 import com.sarim.trinity.ui.absoluteStamp
@@ -87,14 +90,19 @@ import com.sarim.trinity.ui.components.SendButton
 import com.sarim.trinity.ui.components.SimChip
 import com.sarim.trinity.ui.components.SimSheet
 import com.sarim.trinity.ui.theme.Palette
+import java.util.Calendar
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/** A row in the thread: either a day rule or one message. */
+/** A row in the thread: a day rule, a pending scheduled text, or one message. */
 private sealed interface ThreadRow {
     data class Day(val label: String, val key: Long) : ThreadRow
+    data class Scheduled(val entry: ScheduledMessage) : ThreadRow
     data class Msg(val message: Message) : ThreadRow
 }
 
@@ -130,9 +138,17 @@ fun ThreadScreen(
         state.threadMessages(conversation.address)
     }
     val picked = if (selection.active) all.filter { selection.contains(it) } else emptyList()
+    // Pending texts for this conversation only. These are never part of `all`, so
+    // long-press selection cannot pick them up.
+    val scheduledHere = state.scheduled().filter {
+        BlockMatcher.sameNumber(it.address, conversation.address)
+    }
 
     // Opening the thread marks it read and clears its notification.
-    LaunchedEffect(conversation.threadId) { state.openThread(conversation) }
+    LaunchedEffect(conversation.threadId) {
+        state.refreshScheduled()
+        state.openThread(conversation)
+    }
 
     // Back leaves the selection before it leaves the conversation.
     androidx.activity.compose.BackHandler(enabled = selection.active) { selection.clear() }
@@ -147,7 +163,7 @@ fun ThreadScreen(
             }
         }
     }
-    val rows = remember(shown, query) {
+    val rows = remember(shown, query, scheduledHere) {
         val out = ArrayList<ThreadRow>()
         var lastDay = Long.MIN_VALUE
         shown.forEach { message ->
@@ -157,6 +173,10 @@ fun ThreadScreen(
                 lastDay = key
             }
             out += ThreadRow.Msg(message)
+        }
+        // Scheduled sends are in the future, so they sit at the bottom of the list.
+        scheduledHere.sortedBy { it.sendAt }.forEach { entry ->
+            out += ThreadRow.Scheduled(entry)
         }
         out
     }
@@ -276,6 +296,7 @@ fun ThreadScreen(
                         key = { index ->
                             when (val row = rows[index]) {
                                 is ThreadRow.Day -> "day-${row.key}"
+                                is ThreadRow.Scheduled -> "scheduled-${row.entry.id}"
                                 is ThreadRow.Msg -> "msg-${row.message.id}"
                             }
                         },
@@ -283,6 +304,7 @@ fun ThreadScreen(
                     ) { index ->
                         when (val row = rows[index]) {
                             is ThreadRow.Day -> DayRule(row.label)
+                            is ThreadRow.Scheduled -> ScheduledCard(row.entry, state)
                             is ThreadRow.Msg -> {
                                 val message = row.message
                                 val hidden = message.rule != null && !state.revealed.contains(message.id)
@@ -660,6 +682,35 @@ private fun rememberMmsThumbnail(uriString: String?): State<Bitmap?> {
                 }
             }.getOrNull()
         }
+    }
+}
+
+@Composable
+private fun ScheduledCard(entry: ScheduledMessage, state: TrinityState) {
+    val time = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(entry.sendAt))
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .background(Palette.Bone, RoundedCornerShape(12.dp))
+            .border(1.dp, Palette.Line, RoundedCornerShape(12.dp))
+            .padding(12.dp),
+    ) {
+        MonoLabel("SCHEDULED ~$time", color = Palette.Blue, size = 8)
+        Spacer(Modifier.height(4.dp))
+        Text(entry.body, fontSize = 12.sp, color = Palette.Ink, maxLines = 2)
+        entry.lastError?.let { error ->
+            Spacer(Modifier.height(4.dp))
+            MonoLabel(error, color = Palette.Faint, size = 7)
+        }
+        Spacer(Modifier.height(8.dp))
+        MonoLabel(
+            "CANCEL",
+            color = Palette.Ink,
+            size = 8,
+            modifier = Modifier.clickable(onClickLabel = "Cancel scheduled message") {
+                state.cancelScheduled(entry.id)
+            },
+        )
     }
 }
 

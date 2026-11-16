@@ -11,8 +11,8 @@ android {
         applicationId = "com.sarim.trinity"
         minSdk = 26
         targetSdk = 34
-        versionCode = 6
-        versionName = "1.2.1"
+        versionCode = 7
+        versionName = "1.2.2"
     }
 
     testOptions {
@@ -65,6 +65,8 @@ dependencies {
 
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.activity:activity-compose:1.9.0")
+    // Scheduled send: a one-time WorkManager request per pending message.
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.2")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.2")
     // Installs the baseline profiles Compose ships, so a release build starts out

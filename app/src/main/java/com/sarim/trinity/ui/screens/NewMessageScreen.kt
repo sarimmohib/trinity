@@ -1,5 +1,7 @@
 package com.sarim.trinity.ui.screens
 
+import android.app.DatePickerDialog
+import android.app.TimePickerDialog
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -24,6 +26,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
@@ -45,6 +48,7 @@ import com.sarim.trinity.ui.TrinityState
 import com.sarim.trinity.ui.components.Avatar
 import com.sarim.trinity.ui.components.Hairline
 import com.sarim.trinity.ui.components.InkSheet
+import com.sarim.trinity.ui.components.MonoButton
 import com.sarim.trinity.ui.components.MonoLabel
 import com.sarim.trinity.ui.components.SendButton
 import com.sarim.trinity.ui.components.SheetAction
@@ -53,6 +57,7 @@ import com.sarim.trinity.ui.components.SimSheet
 import com.sarim.trinity.ui.formatNumber
 import com.sarim.trinity.ui.smsCounter
 import com.sarim.trinity.ui.theme.Palette
+import java.util.Calendar
 
 /**
  * A new conversation. Any number of recipients, chosen from the address book or
@@ -75,6 +80,9 @@ fun NewMessageScreen(
     // True when the text is waiting on a line choice, because "ask every time" is on.
     var askSend by remember { mutableStateOf(false) }
     var mmsStatus by remember { mutableStateOf<String?>(null) }
+    // Set once the user has picked both a date and a time; drives the confirm button.
+    var scheduleAt by remember { mutableStateOf<Long?>(null) }
+    var scheduleNote by remember { mutableStateOf<String?>(null) }
     val context = LocalContext.current
     val mediaLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
@@ -116,6 +124,57 @@ fun NewMessageScreen(
         recipients.drop(1).forEach { state.sendMessage(it, text, subscriptionId) }
         state.sendMessage(first, text, subscriptionId) { threadId -> onSent(threadId, first) }
         body = ""
+    }
+
+    fun scheduleTime(millis: Long): String {
+        val cal = Calendar.getInstance().apply { timeInMillis = millis }
+        return "%02d:%02d".format(cal.get(Calendar.HOUR_OF_DAY), cal.get(Calendar.MINUTE))
+    }
+
+    fun scheduleDay(millis: Long): String {
+        val cal = Calendar.getInstance().apply { timeInMillis = millis }
+        return "%02d/%02d".format(cal.get(Calendar.DAY_OF_MONTH), cal.get(Calendar.MONTH) + 1)
+    }
+
+    // The platform pickers need a themed Activity context, which Compose supplies here.
+    // They are deliberately plain: no new dependency and no Material date-picker wiring.
+    fun pickSchedule() {
+        val now = Calendar.getInstance()
+        val date = DatePickerDialog(
+            context,
+            { _, year, month, day ->
+                val time = TimePickerDialog(
+                    context,
+                    { _, hour, minute ->
+                        val picked = Calendar.getInstance().apply {
+                            set(year, month, day, hour, minute, 0)
+                            set(Calendar.MILLISECOND, 0)
+                        }
+                        scheduleAt = picked.timeInMillis
+                        scheduleNote = null
+                    },
+                    now.get(Calendar.HOUR_OF_DAY),
+                    now.get(Calendar.MINUTE),
+                    true, // 24-hour clock, like the rest of the app's stamps.
+                )
+                time.show()
+            },
+            now.get(Calendar.YEAR),
+            now.get(Calendar.MONTH),
+            now.get(Calendar.DAY_OF_MONTH),
+        )
+        date.datePicker.minDate = System.currentTimeMillis() - 1000L
+        date.show()
+    }
+
+    fun commitSchedule() {
+        val whenAt = scheduleAt ?: return
+        if (!canSend) return
+        val text = body
+        recipients.forEach { state.scheduleMessage(it, text, whenAt) }
+        body = ""
+        scheduleAt = null
+        scheduleNote = "SCHEDULED FOR ${scheduleTime(whenAt)}"
     }
 
     // Back key follows the same rule as the close arrow: ask before losing text.
@@ -319,6 +378,35 @@ fun NewMessageScreen(
                 Spacer(Modifier.height(6.dp))
                 MonoLabel(mmsStatus.orEmpty(), color = Palette.Faint, size = 8)
             }
+            scheduleNote?.let { note ->
+                Spacer(Modifier.height(6.dp))
+                MonoLabel(note, color = Palette.Faint, size = 8)
+            }
+        }
+
+        // A chosen time gets its own confirm row so it cannot be mistaken for an
+        // immediate send. WorkManager is inexact; the thread will say so too.
+        val at = scheduleAt
+        if (at != null) {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                MonoButton(
+                    label = "SCHEDULE ${scheduleTime(at)}",
+                    enabled = canSend,
+                    onClick = { commitSchedule() },
+                )
+                Spacer(Modifier.width(10.dp))
+                MonoLabel(scheduleDay(at), color = Palette.Faint, size = 8)
+                Spacer(Modifier.weight(1f))
+                MonoLabel(
+                    "CLEAR",
+                    color = Palette.Faint,
+                    size = 8,
+                    modifier = Modifier.clickable { scheduleAt = null },
+                )
+            }
         }
 
         // Send sits with the thumb, and the SIM it will leave from sits beside it.
@@ -338,6 +426,12 @@ fun NewMessageScreen(
                 enabled = recipients.isNotEmpty(),
             ) {
                 Icon(Icons.Outlined.Image, contentDescription = "Attach a photo")
+            }
+            IconButton(
+                onClick = { pickSchedule() },
+                enabled = recipients.isNotEmpty(),
+            ) {
+                Icon(Icons.Outlined.Schedule, contentDescription = "Schedule this message")
             }
             val simLabel = state.sendSimLabel()
             if (simLabel != null) {

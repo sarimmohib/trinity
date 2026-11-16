@@ -1,0 +1,4 @@
+1.2.2
+
+- You can schedule a text for later and cancel it from the conversation before it goes out.
+- You can back up and restore your SMS threads to a JSON file, with a preview of what will be restored. Picture messages are not included in the backup.
