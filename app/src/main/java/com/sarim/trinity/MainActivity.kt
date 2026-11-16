@@ -73,6 +73,7 @@ import com.sarim.trinity.ui.screens.PersonScreen
 import com.sarim.trinity.ui.screens.SettingsScreen
 import com.sarim.trinity.ui.screens.ThreadScreen
 import com.sarim.trinity.sms.MessageNotifier
+import com.sarim.trinity.ui.components.UpdateOverlay
 import com.sarim.trinity.ui.theme.Palette
 import com.sarim.trinity.ui.theme.ThemePrefs
 import com.sarim.trinity.ui.theme.TrinityTheme
@@ -200,6 +201,9 @@ private fun TrinityApp(
         if (granted) state.refresh()
     }
 
+    // Once per launch: show a release found earlier, and look again if it has been a while.
+    LaunchedEffect(Unit) { state.startUpdateWatch() }
+
     if (!granted) {
         PermissionGate(
             onGrant = { launcher.launch(state.requiredPermissions.toTypedArray()) },
@@ -209,6 +213,7 @@ private fun TrinityApp(
 
     BackHandler(enabled = route !is Route.Tab) { goBack() }
 
+    Box(Modifier.fillMaxSize()) {
     Column(
         Modifier
             .fillMaxSize()
@@ -321,6 +326,16 @@ private fun TrinityApp(
                 onSelect = { go(Route.Tab(it)) },
             )
         }
+    }
+
+    // Over everything, so it cannot be missed or half-covered.
+    state.availableUpdate?.takeIf { state.updateOverlay }?.let { release ->
+        UpdateOverlay(
+            release = release,
+            onLater = { state.hideUpdate() },
+            onSkip = { state.skipUpdate() },
+        )
+    }
     }
 }
 

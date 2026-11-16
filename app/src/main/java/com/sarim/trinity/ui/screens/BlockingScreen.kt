@@ -32,6 +32,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -39,6 +40,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.sarim.trinity.data.BlockStore
+import com.sarim.trinity.data.CompoundRule
+import com.sarim.trinity.data.Condition
+import com.sarim.trinity.data.Field
+import com.sarim.trinity.data.Match
 import com.sarim.trinity.data.Scope
 import com.sarim.trinity.ui.TrinityState
 import com.sarim.trinity.ui.components.Hairline
@@ -57,6 +62,10 @@ fun BlockingScreen(
     // New rules start covering both surfaces; the choice sticks for the next one.
     var scope by remember { mutableStateOf(Scope.Both) }
     val rules = state.blockStore.rules.value
+    // The combined rule being built: how its conditions join, and the ones added so far.
+    var match by remember { mutableStateOf(Match.All) }
+    var field by remember { mutableStateOf(Field.Name) }
+    val conditions = remember { mutableStateListOf<Condition>() }
 
     Column(
         Modifier
@@ -93,11 +102,35 @@ fun BlockingScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             SegmentButton("NAMES · ${rules.names.size + rules.numbers.size}", segment == 0, Modifier.weight(1f)) { segment = 0 }
-            SegmentButton("KEYWORDS · ${rules.keywords.size}", segment == 1, Modifier.weight(1f)) { segment = 1 }
+            SegmentButton("WORDS · ${rules.keywords.size}", segment == 1, Modifier.weight(1f)) { segment = 1 }
+            SegmentButton("AND/OR · ${rules.combined.size}", segment == 2, Modifier.weight(1f)) { segment = 2 }
         }
 
         Column(Modifier.padding(horizontal = 24.dp, vertical = 8.dp)) {
-            MonoLabel(if (segment == 0) "BLOCK A NAME OR NUMBER" else "BLOCK A WORD", size = 8, color = Palette.Faint)
+            if (segment == 2) {
+                MonoLabel("A RULE FIRES WHEN", size = 8, color = Palette.Faint)
+                Spacer(Modifier.height(7.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Match.values().forEach { option ->
+                        ChoiceButton(
+                            if (option == Match.All) "ALL MATCH · AND" else "ANY MATCHES · OR",
+                            match == option,
+                            Modifier.weight(1f),
+                        ) { match = option }
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                MonoLabel("ADD A CONDITION ON", size = 8, color = Palette.Faint)
+                Spacer(Modifier.height(7.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Field.values().forEach { option ->
+                        ChoiceButton(option.label, field == option, Modifier.weight(1f)) { field = option }
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+            } else {
+                MonoLabel(if (segment == 0) "BLOCK A NAME OR NUMBER" else "BLOCK A WORD", size = 8, color = Palette.Faint)
+            }
             Spacer(Modifier.height(7.dp))
             Row(
                 Modifier
@@ -111,7 +144,15 @@ fun BlockingScreen(
                 Box(Modifier.weight(1f)) {
                     if (draft.isEmpty()) {
                         Text(
-                            if (segment == 0) "Name, or a number" else "A word inside a message",
+                            when (segment) {
+                                0 -> "Name, or a number"
+                                1 -> "A word inside a message"
+                                else -> when (field) {
+                                    Field.Name -> "Part of a contact name"
+                                    Field.Number -> "A phone number"
+                                    Field.Text -> "A word inside a message"
+                                }
+                            },
                             fontSize = 12.sp,
                             color = Palette.Faint,
                         )
@@ -130,7 +171,14 @@ fun BlockingScreen(
                         .background(Palette.Ink, CircleShape)
                         .clickable {
                             if (draft.isNotBlank()) {
-                                if (segment == 0) state.addRule(draft, scope) else state.addKeyword(draft)
+                                when (segment) {
+                                    0 -> state.addRule(draft, scope)
+                                    1 -> state.addKeyword(draft)
+                                    else -> {
+                                        val next = Condition(field, draft.trim())
+                                        if (!conditions.contains(next)) conditions.add(next)
+                                    }
+                                }
                                 draft = ""
                             }
                         },
@@ -144,7 +192,7 @@ fun BlockingScreen(
                     )
                 }
             }
-            if (segment == 0) {
+            if (segment == 0 || segment == 2) {
                 Spacer(Modifier.height(8.dp))
                 Row(
                     Modifier.fillMaxWidth(),
@@ -167,6 +215,38 @@ fun BlockingScreen(
             }
             if (rules.names.isEmpty() && rules.numbers.isEmpty()) {
                 EmptyRules("No names blocked yet.")
+            }
+        } else if (segment == 2) {
+            SectionLabel("BEING BUILT · ${match.label}")
+            if (conditions.isEmpty()) {
+                EmptyRules("Add two or more conditions, then save. AND needs every one to hold; OR needs just one.")
+            } else {
+                conditions.toList().forEach { condition ->
+                    RuleRow(condition.value, "${condition.field.label} CONDITION") { conditions.remove(condition) }
+                }
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 24.dp, vertical = 10.dp)
+                        .height(40.dp)
+                        .background(Palette.Ink, RoundedCornerShape(5.dp))
+                        .clickable {
+                            state.addCombined(CompoundRule(match, conditions.toList(), scope))
+                            conditions.clear()
+                        },
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    MonoLabel("SAVE ${match.label} RULE", color = Palette.Paper, size = 9)
+                }
+            }
+            SectionLabel("COMBINED RULES")
+            rules.combined.forEach { rule ->
+                val where = if (rule.readsText) "TEXTS" else rule.scope.label
+                RuleRow(rule.summary, "${rule.match.label} · $where") { state.removeCombined(rule) }
+            }
+            if (rules.combined.isEmpty()) {
+                EmptyRules("No combined rules yet. Example: NAME \"bank\" AND TEXT \"otp\".")
             }
         } else {
             SectionLabel("KEYWORD RULES · TEXTS")
@@ -264,6 +344,20 @@ private fun SegmentButton(label: String, active: Boolean, modifier: Modifier = M
 }
 
 @Composable
+private fun ChoiceButton(label: String, active: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Box(
+        modifier
+            .height(28.dp)
+            .background(if (active) Palette.Ink else Palette.Bone, RoundedCornerShape(4.dp))
+            .border(1.dp, if (active) Palette.Ink else Palette.Line, RoundedCornerShape(4.dp))
+            .clickable { onClick() },
+        contentAlignment = Alignment.Center,
+    ) {
+        MonoLabel(label, color = if (active) Palette.Paper else Palette.Ink, size = 8)
+    }
+}
+
+@Composable
 private fun ScopeButton(scope: Scope, active: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
     Box(
         modifier
@@ -354,4 +448,5 @@ fun Toggle(on: Boolean, onChange: (Boolean) -> Unit) {
 
 /** Shared by the Blocking screen and Settings. */
 fun ruleSummary(rules: BlockStore.Rules): String =
-    "${rules.names.size} names · ${rules.numbers.size} numbers · ${rules.keywords.size} keywords"
+    "${rules.names.size} names · ${rules.numbers.size} numbers · ${rules.keywords.size} keywords" +
+        if (rules.combined.isEmpty()) "" else " · ${rules.combined.size} and/or"
