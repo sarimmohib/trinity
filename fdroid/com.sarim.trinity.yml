@@ -30,7 +30,11 @@ Repo: https://github.com/sarimmohib/trinity.git
 Builds:
   - versionName: 1.0.1
     versionCode: 2
-    commit: v1.0.1
+    commit: a57ad4d77afb5517143261b2ff7208db924de361
     output: app/build/outputs/apk/release/app-release.apk
     gradle:
       - yes
+
+# Follow tagged releases on GitHub; F-Droid picks up new tags by itself.
+AutoUpdateMode: Version
+UpdateCheckMode: Tags
