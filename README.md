@@ -20,6 +20,11 @@ and dark, the same on every screen.
   `0300…` in the address book.
 * When a call ends you get a short summary: whether it was answered, missed,
   declined, busy or failed, how long it lasted, and who hung up.
+* Optional call screening can silence or reject unknown callers before the phone
+  rings, using your own rules on the device. It is off until you switch it on and
+  grant the screening role.
+* A second call can be answered while one is active, then swapped, merged, put on
+  hold or hung up separately.
 
 ### Messages
 * Conversations and threads, grouped by person, with quick reply from the
@@ -27,7 +32,13 @@ and dark, the same on every screen.
 * Sending, forwarding, copying and deleting; muting a conversation; starting a new
   message from a number.
 * If Trinity holds the SMS role, your texts come to it directly instead of the stock
-  app.
+  app. Picture messages are received, shown and sent too; blocked ones go to Held
+  rather than the inbox.
+* One search field finds a call, a text or a contact, and opens the matching item.
+* Texts can be scheduled for later and cancelled before they go out. Scheduling is
+  approximate (it is not an exact alarm).
+* For a phone that holds the SMS role, texts can be exported to JSON and restored
+  with duplicates skipped. Picture messages are not part of that backup.
 
 ### Contacts
 * Your address book, with per-person call history and message history.
@@ -36,6 +47,9 @@ and dark, the same on every screen.
 * WhatsApp availability when WhatsApp shares its contacts, plus chat and call
   shortcuts.
 * A Google-sync indicator that says whether your contacts are actually syncing.
+* Favourites and read-only contact groups, with filters over the list.
+* A find-duplicates sheet suggests pairs to merge; merging links the two contacts and
+  never deletes either one.
 
 ### Blocking
 * **Name** and **number** rules hide a whole conversation and can silence its calls.
@@ -45,6 +59,16 @@ and dark, the same on every screen.
 * Blocked texts are held aside instead of deleted, so you can see what was caught and
   let a sender through later.
 * Calls and texts can be blocked per surface: calls only, messages only, or both.
+* Rules may be limited to a time window and weekdays; number rules accept `*` and `?`
+  wildcards, and keywords can be whole-word only.
+* Rules can be exported to a JSON pack and imported with a preview before replacing
+  or merging. A bounded decision log records which rule held a message or call,
+  without storing message text.
+
+### Home screen
+* An optional widget shows unread messages, missed calls today and held texts; each
+  count opens its own screen.
+* A quick settings tile toggles unknown-caller screening without opening the app.
 
 ### Updates
 Settings can check GitHub for a newer release and tell you once, with the release

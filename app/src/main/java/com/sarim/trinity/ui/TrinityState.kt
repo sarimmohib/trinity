@@ -40,6 +40,9 @@ import com.sarim.trinity.data.Person
 import com.sarim.trinity.data.QuarantineStore
 import com.sarim.trinity.data.Release
 import com.sarim.trinity.data.RulePack
+import com.sarim.trinity.data.ScreeningPrefs
+import com.sarim.trinity.data.ScreeningSettings
+import com.sarim.trinity.data.SettingsBackup
 import com.sarim.trinity.data.Scope
 import com.sarim.trinity.data.Search
 import com.sarim.trinity.data.TimeWindow
@@ -1082,6 +1085,57 @@ class TrinityState(private val context: Context, private val scope: CoroutineSco
             }
             refresh()
         }
+    }
+
+    // --- settings backup (M7) ---
+
+    /** Result of the last settings export or restore, shown once in Settings. */
+    var settingsBackupNote by mutableStateOf<String?>(null)
+
+    /**
+     * Mirror of the screening settings in `trinity.ui`. The screen reads this instead
+     * of loading the file itself, so a restore can refresh it in one place.
+     */
+    var screeningSettings by mutableStateOf(ScreeningPrefs.load(context))
+        private set
+
+    fun setScreening(settings: ScreeningSettings) {
+        ScreeningPrefs.save(context, settings)
+        screeningSettings = settings
+    }
+
+    /** Re-reads every in-memory mirror of `trinity.ui` after a restore replaced the file. */
+    private fun reloadUiSettings() {
+        screeningSettings = ScreeningPrefs.load(context)
+        startTab = uiPrefs.getInt("start_tab", 0)
+        recentSearches = readRecentSearches()
+    }
+
+    suspend fun exportSettings(uri: Uri) {
+        val count = withContext(Dispatchers.IO) { SettingsBackup.export(context, uri) }
+        settingsBackupNote = when {
+            count == null -> "EXPORT FAILED"
+            count > 0 -> "$count SETTINGS FILES EXPORTED"
+            else -> "NOTHING TO EXPORT"
+        }
+    }
+
+    /** Counts what a restore would write without touching anything. Safe to call from the UI. */
+    suspend fun dryRunSettings(uri: Uri): Int? = withContext(Dispatchers.IO) {
+        runCatching { SettingsBackup.dryRun(context, uri) }.getOrNull()
+    }
+
+    suspend fun restoreSettings(uri: Uri) {
+        val count = withContext(Dispatchers.IO) { SettingsBackup.restore(context, uri) }
+        if (count == null) {
+            settingsBackupNote = "RESTORE FAILED"
+            return
+        }
+        // The files changed under the in-memory stores, so reload before re-reading.
+        blockStore.reload()
+        reloadUiSettings()
+        refresh()
+        settingsBackupNote = "$count SETTINGS FILES RESTORED"
     }
 
     // --- updates ---

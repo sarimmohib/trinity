@@ -50,6 +50,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -96,7 +98,10 @@ fun SettingsScreen(
     var ruleImportPack by remember { mutableStateOf<RulePack.Pack?>(null) }
     var restoreUri by remember { mutableStateOf<Uri?>(null) }
     var restoreCount by remember { mutableStateOf<Int?>(null) }
-    var screening by remember { mutableStateOf<ScreeningSettings>(ScreeningPrefs.load(context)) }
+    var settingsRestoreUri by remember { mutableStateOf<Uri?>(null) }
+    var settingsRestoreCount by remember { mutableStateOf<Int?>(null) }
+    // Read from state so a settings restore refreshes these values in one place.
+    val screening = state.screeningSettings
     var actionSheet by remember { mutableStateOf(false) }
 
     fun open(intent: Intent) = runCatching { context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
@@ -128,6 +133,22 @@ fun SettingsScreen(
                 val count = state.dryRunRestore(uri)
                 restoreCount = count
                 restoreUri = uri
+            }
+        }
+    }
+
+    // Settings backup uses its own SAF launchers: it touches app-owned preferences,
+    // not the message provider, and never asks for a permission.
+    val settingsExportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json"),
+    ) { uri -> uri?.let { scope.launch { state.exportSettings(it) } } }
+    val settingsRestoreLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri != null) {
+            scope.launch {
+                settingsRestoreCount = state.dryRunSettings(uri)
+                settingsRestoreUri = uri
             }
         }
     }
@@ -278,8 +299,7 @@ fun SettingsScreen(
             icon = Icons.Outlined.Shield,
             toggle = screening.screenUnknown,
             onToggle = { enabled ->
-                screening = screening.copy(screenUnknown = enabled)
-                ScreeningPrefs.save(context, screening)
+                state.setScreening(screening.copy(screenUnknown = enabled))
             },
         )
         SettingsRow(
@@ -340,6 +360,27 @@ fun SettingsScreen(
             onClick = { restoreLauncher.launch(arrayOf("application/json")) },
         )
         state.backupNote?.let { note ->
+            MonoLabel(note, size = 7, color = Palette.Faint, modifier = Modifier.padding(start = 24.dp))
+        }
+
+        SettingsSection("SETTINGS BACKUP")
+        SettingsRow(
+            label = "Export settings",
+            value = "JSON",
+            sub = "RULES · PREFERENCES · NO MESSAGE TEXTS",
+            icon = Icons.Outlined.Storage,
+            talkBackLabel = "Export settings. Saves rules and preferences as JSON without message bodies.",
+            onClick = { settingsExportLauncher.launch("trinity-settings.json") },
+        )
+        SettingsRow(
+            label = "Restore settings",
+            value = "PREVIEW FIRST",
+            sub = "ATOMIC · ALL FILES OR NONE",
+            icon = Icons.Outlined.Storage,
+            talkBackLabel = "Restore settings. Previews the file count before replacing settings.",
+            onClick = { settingsRestoreLauncher.launch(arrayOf("application/json")) },
+        )
+        state.settingsBackupNote?.let { note ->
             MonoLabel(note, size = 7, color = Palette.Faint, modifier = Modifier.padding(start = 24.dp))
         }
 
@@ -517,6 +558,35 @@ fun SettingsScreen(
         )
     }
 
+    if (settingsRestoreUri != null) {
+        val dismissSettingsRestore = {
+            settingsRestoreUri = null
+            settingsRestoreCount = null
+        }
+        InkSheet(
+            title = "RESTORE SETTINGS",
+            actions = buildList {
+                if (settingsRestoreCount != null) {
+                    add(
+                        SheetAction(
+                            "Restore ${settingsRestoreCount} files",
+                            "RULES · PREFERENCES · NO MESSAGE TEXTS",
+                        ) {
+                            settingsRestoreUri?.let { scope.launch { state.restoreSettings(it) } }
+                            dismissSettingsRestore()
+                        },
+                    )
+                } else {
+                    add(SheetAction("File could not be read", "INVALID OR UNSUPPORTED BACKUP") {
+                        dismissSettingsRestore()
+                    })
+                }
+                add(SheetAction("Cancel") { dismissSettingsRestore() })
+            },
+            onDismiss = dismissSettingsRestore,
+        )
+    }
+
     ruleImportPack?.let { pack ->
         InkSheet(
             title = "IMPORT RULES",
@@ -543,16 +613,14 @@ fun SettingsScreen(
                     "Silence",
                     if (screening.action == ScreeningAction.SILENCE) "ON" else null,
                 ) {
-                    screening = screening.copy(action = ScreeningAction.SILENCE)
-                    ScreeningPrefs.save(context, screening)
+                    state.setScreening(screening.copy(action = ScreeningAction.SILENCE))
                     actionSheet = false
                 },
                 SheetAction(
                     "Reject",
                     if (screening.action == ScreeningAction.REJECT) "ON" else null,
                 ) {
-                    screening = screening.copy(action = ScreeningAction.REJECT)
-                    ScreeningPrefs.save(context, screening)
+                    state.setScreening(screening.copy(action = ScreeningAction.REJECT))
                     actionSheet = false
                 },
                 SheetAction("Cancel") { actionSheet = false },
@@ -703,6 +771,7 @@ private fun SettingsRow(
     toggle: Boolean? = null,
     onToggle: ((Boolean) -> Unit)? = null,
     onClick: (() -> Unit)? = null,
+    talkBackLabel: String? = null,
 ) {
     val tint = Palette.Accents[(label.hashCode() and 0x7FFFFFFF) % Palette.Accents.size]
     Row(
@@ -712,6 +781,7 @@ private fun SettingsRow(
             .height(62.dp)
             .glassBlock(tint, 20.dp)
             .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier)
+            .then(if (talkBackLabel != null) Modifier.semantics { contentDescription = talkBackLabel } else Modifier)
             .padding(horizontal = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
