@@ -23,6 +23,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Dialpad
 import androidx.compose.material.icons.outlined.MicOff
@@ -38,8 +40,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.sarim.trinity.ui.components.Avatar
@@ -81,23 +86,26 @@ private const val ENDED_SCREEN_MS = 2_500L
 
 @Composable
 private fun CallSurface(onClose: () -> Unit) {
-    val live = CallUi.live
+    val calls = CallUi.calls
+    val primary = CallUi.live
     val finished = CallUi.last
     // A call that has just ended stays up for a moment, saying how it ended.
-    val call = live ?: finished
+    val call = primary ?: finished
     val over = call?.ended == true
     var seen by remember { mutableStateOf(false) }
     var answeredAt by remember { mutableStateOf(0L) }
     var clock by remember { mutableStateOf(0L) }
     var keys by remember { mutableStateOf(false) }
     var sent by remember { mutableStateOf("") }
+    var adding by remember { mutableStateOf(false) }
+    var addNumber by remember { mutableStateOf("") }
 
     // No call left closes the screen — after a moment on how the last one ended, when
     // there is something to say. A new call arriving cancels the wait, because the
     // effect is keyed on both.
-    LaunchedEffect(live != null, finished) {
+    LaunchedEffect(calls.isNotEmpty(), finished) {
         when {
-            live != null -> seen = true
+            calls.isNotEmpty() -> seen = true
             finished != null -> {
                 delay(ENDED_SCREEN_MS)
                 onClose()
@@ -208,6 +216,23 @@ private fun CallSurface(onClose: () -> Unit) {
             )
         }
 
+        // The ADD CALL control must be reachable with one active call — that is how a
+        // second call is placed. Per-call rows below are shown only when there are two.
+        if (calls.isNotEmpty() && !over) {
+            OtherCalls(
+                calls = calls,
+                primaryId = primary?.id,
+                adding = adding,
+                addNumber = addNumber,
+                onAddNumber = { addNumber = it },
+                onToggleAdding = { adding = it },
+                onAddDone = {
+                    addNumber = ""
+                    adding = false
+                },
+            )
+        }
+
         // Nothing to mute or key into once the call is over.
         if (!over) Row(
             Modifier
@@ -298,6 +323,145 @@ private fun CallSurface(onClose: () -> Unit) {
             }
         }
     }
+}
+
+/** Every call except the one on the main card, plus the add-a-call field. */
+@Composable
+private fun OtherCalls(
+    calls: List<LiveCall>,
+    primaryId: Long?,
+    adding: Boolean,
+    addNumber: String,
+    onAddNumber: (String) -> Unit,
+    onToggleAdding: (Boolean) -> Unit,
+    onAddDone: () -> Unit,
+) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 24.dp, vertical = 6.dp)
+            .glassBlock(Palette.Accents[2], 18.dp, 1f)
+            .padding(12.dp),
+    ) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            MonoLabel(
+                if (calls.size > 1) "${calls.size} CALLS" else "SECOND CALL",
+                size = 8,
+                color = Palette.Faint,
+            )
+            if (calls.size > 1) {
+                MonoLabel(
+                    "HOLD OTHERS",
+                    size = 8,
+                    color = Palette.Ink,
+                    modifier = Modifier.clickable(onClickLabel = "Hold all other calls") {
+                        TrinityInCallService.holdOther()
+                    },
+                )
+            }
+        }
+        if (calls.size > 1) {
+            Spacer(Modifier.height(8.dp))
+            calls.filterNot { it.id == primaryId }.forEach { other ->
+                OtherCallRow(other)
+                Spacer(Modifier.height(6.dp))
+            }
+        }
+        if (adding) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                BasicTextField(
+                    value = addNumber,
+                    onValueChange = onAddNumber,
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                    textStyle = TextStyle(
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 13.sp,
+                        color = Palette.Ink,
+                    ),
+                    cursorBrush = SolidColor(Palette.Ink),
+                    modifier = Modifier
+                        .weight(1f)
+                        .glassBlock(Palette.Paper, 12.dp, 0.8f)
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    decorationBox = { inner ->
+                        if (addNumber.isEmpty()) MonoLabel("number to add", size = 8, color = Palette.Faint)
+                        inner()
+                    },
+                )
+                Spacer(Modifier.width(8.dp))
+                TinyAction("CALL") {
+                    if (addNumber.isNotBlank()) TrinityInCallService.addCall(addNumber)
+                    onAddDone()
+                }
+                Spacer(Modifier.width(6.dp))
+                TinyAction("CANCEL") { onAddDone() }
+            }
+        } else {
+            MonoLabel(
+                "+ ADD CALL",
+                size = 8,
+                color = Palette.Ink,
+                modifier = Modifier.clickable(onClickLabel = "Add another call") { onToggleAdding(true) },
+            )
+        }
+    }
+}
+
+/** One non-primary call: who it is, what it is doing, and what can be done to it. */
+@Composable
+private fun OtherCallRow(other: LiveCall) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .glassBlock(Palette.Paper, 14.dp, 0.8f)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                other.name ?: formatNumber(other.number),
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = Palette.Ink,
+                maxLines = 1,
+            )
+            MonoLabel(
+                when {
+                    other.ringing -> "RINGING"
+                    other.active -> "ACTIVE"
+                    other.holding -> "ON HOLD"
+                    else -> "CALLING"
+                },
+                size = 7,
+                color = Palette.Faint,
+            )
+        }
+        Spacer(Modifier.width(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (other.ringing) {
+                TinyAction("DECLINE") { TrinityInCallService.decline(other.id) }
+                TinyAction("ANSWER") { TrinityInCallService.answer(other.id) }
+            } else {
+                TinyAction("SWAP") { TrinityInCallService.swap() }
+                TinyAction("MERGE") { TrinityInCallService.merge() }
+                TinyAction("END") { TrinityInCallService.hangUp(other.id) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TinyAction(label: String, onClick: () -> Unit) {
+    MonoLabel(
+        label,
+        color = Palette.Ink,
+        size = 7,
+        modifier = Modifier
+            .border(1.dp, Palette.Line, RoundedCornerShape(4.dp))
+            .clickable(onClickLabel = label) { onClick() }
+            .padding(horizontal = 7.dp, vertical = 5.dp),
+    )
 }
 
 private fun initials(name: String?): String =

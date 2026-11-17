@@ -4,6 +4,7 @@ import com.sarim.trinity.ui.components.glassBlock
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -56,6 +57,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.sarim.trinity.BuildConfig
 import com.sarim.trinity.data.Links
 import com.sarim.trinity.data.RulePack
+import com.sarim.trinity.data.ScreeningAction
+import com.sarim.trinity.data.ScreeningPrefs
+import com.sarim.trinity.data.ScreeningSettings
 import com.sarim.trinity.ui.TrinityState
 import com.sarim.trinity.ui.components.Hairline
 import com.sarim.trinity.ui.components.InkSheet
@@ -78,6 +82,8 @@ fun SettingsScreen(
     val rules by state.blockStore.rules.collectAsStateWithLifecycle()
     val smsDefault = state.isDefaultSmsApp()
     val dialerDefault = state.isDefaultDialer()
+    val screeningHeld = state.isCallScreeningRoleHeld()
+    val screeningSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
     val granted = state.grantedPermissionCount()
     val total = state.requiredPermissions.size
     val selectedSim = state.simCards.firstOrNull { it.subscriptionId == state.selectedSubscription }
@@ -90,6 +96,8 @@ fun SettingsScreen(
     var ruleImportPack by remember { mutableStateOf<RulePack.Pack?>(null) }
     var restoreUri by remember { mutableStateOf<Uri?>(null) }
     var restoreCount by remember { mutableStateOf<Int?>(null) }
+    var screening by remember { mutableStateOf<ScreeningSettings>(ScreeningPrefs.load(context)) }
+    var actionSheet by remember { mutableStateOf(false) }
 
     fun open(intent: Intent) = runCatching { context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
 
@@ -184,6 +192,21 @@ fun SettingsScreen(
             onClick = { if (!dialerDefault) askForRole(TrinityState.DefaultApp.Dialer) },
         )
         SettingsRow(
+            label = "Call screening app",
+            value = if (screeningHeld) "ON" else "NOT SET",
+            sub = when {
+                !screeningSupported -> "ANDROID 9 OR OLDER · IN-CALL BLOCKING IS USED"
+                !screeningHeld -> "IN-CALL BLOCKING IS USED INSTEAD"
+                else -> "FILTERS CALLS BEFORE THEY RING"
+            },
+            icon = Icons.Outlined.Shield,
+            onClick = {
+                if (screeningSupported && !screeningHeld) {
+                    askForRole(TrinityState.DefaultApp.CallScreening)
+                }
+            },
+        )
+        SettingsRow(
             label = "Send from",
             value = when {
                 state.askEachTime -> "ASK EACH TIME"
@@ -242,6 +265,36 @@ fun SettingsScreen(
             icon = Icons.Outlined.Shield,
             toggle = rules.hideMatchedCalls,
             onToggle = { state.setHideMatchedCalls(it) },
+        )
+
+        SettingsSection("CALL SCREENING")
+        SettingsRow(
+            label = "Screen unknown callers",
+            sub = when {
+                !screeningHeld -> "IN-CALL BEHAVIOUR IS USED INSTEAD"
+                screening.screenUnknown -> "UNKNOWN NUMBERS ARE FILTERED"
+                else -> "OFF · UNKNOWN NUMBERS RING NORMALLY"
+            },
+            icon = Icons.Outlined.Shield,
+            toggle = screening.screenUnknown,
+            onToggle = { enabled ->
+                screening = screening.copy(screenUnknown = enabled)
+                ScreeningPrefs.save(context, screening)
+            },
+        )
+        SettingsRow(
+            label = "Screening action",
+            value = when (screening.action) {
+                ScreeningAction.SILENCE -> "SILENCE"
+                ScreeningAction.REJECT -> "REJECT"
+            },
+            sub = when {
+                !screeningSupported -> "REJECT IS USED BELOW ANDROID 10"
+                !screeningHeld -> "APPLIES ONCE THE SCREENING ROLE IS SET"
+                else -> "FOR RULE-MATCHED AND UNKNOWN CALLERS"
+            },
+            icon = Icons.Outlined.Shield,
+            onClick = { actionSheet = true },
         )
 
         SettingsSection("RULE PACKS")
@@ -479,6 +532,32 @@ fun SettingsScreen(
                 SheetAction("Cancel") { ruleImportPack = null },
             ),
             onDismiss = { ruleImportPack = null },
+        )
+    }
+
+    if (actionSheet) {
+        InkSheet(
+            title = "SCREENING ACTION",
+            actions = listOf(
+                SheetAction(
+                    "Silence",
+                    if (screening.action == ScreeningAction.SILENCE) "ON" else null,
+                ) {
+                    screening = screening.copy(action = ScreeningAction.SILENCE)
+                    ScreeningPrefs.save(context, screening)
+                    actionSheet = false
+                },
+                SheetAction(
+                    "Reject",
+                    if (screening.action == ScreeningAction.REJECT) "ON" else null,
+                ) {
+                    screening = screening.copy(action = ScreeningAction.REJECT)
+                    ScreeningPrefs.save(context, screening)
+                    actionSheet = false
+                },
+                SheetAction("Cancel") { actionSheet = false },
+            ),
+            onDismiss = { actionSheet = false },
         )
     }
 

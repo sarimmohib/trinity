@@ -1,0 +1,4 @@
+1.3.0
+
+- Unwanted callers can now be silenced or rejected before the phone rings. This is opt-in and uses on-device rules only.
+- A second call can be handled from the in-call screen: switch between calls, merge them into a conference, or hang up one call.

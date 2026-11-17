@@ -260,7 +260,7 @@ class TrinityState(private val context: Context, private val scope: CoroutineSco
     }
 
     /** Which "make me the default" surface is wanted. */
-    enum class DefaultApp { Sms, Dialer }
+    enum class DefaultApp { Sms, Dialer, CallScreening }
 
     /**
      * Every way to reach the system dialog that hands Trinity a default role, best
@@ -271,7 +271,11 @@ class TrinityState(private val context: Context, private val scope: CoroutineSco
     fun defaultAppRequests(kind: DefaultApp): List<Intent> {
         val wanted = mutableListOf<Intent>()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val role = if (kind == DefaultApp.Sms) RoleManager.ROLE_SMS else RoleManager.ROLE_DIALER
+            val role = when (kind) {
+                DefaultApp.Sms -> RoleManager.ROLE_SMS
+                DefaultApp.Dialer -> RoleManager.ROLE_DIALER
+                DefaultApp.CallScreening -> RoleManager.ROLE_CALL_SCREENING
+            }
             val roleManager = context.getSystemService(RoleManager::class.java)
             if (roleManager != null &&
                 runCatching { roleManager.isRoleAvailable(role) }.getOrDefault(false)
@@ -285,13 +289,19 @@ class TrinityState(private val context: Context, private val scope: CoroutineSco
                     ?.let { wanted += it }
             }
         }
-        if (kind == DefaultApp.Sms) {
-            @Suppress("DEPRECATION")
-            wanted += Intent(Telephony.Sms.Intents.ACTION_CHANGE_DEFAULT)
-                .putExtra(Telephony.Sms.Intents.EXTRA_PACKAGE_NAME, context.packageName)
-        } else {
-            wanted += Intent(TelecomManager.ACTION_CHANGE_DEFAULT_DIALER)
-                .putExtra(TelecomManager.EXTRA_CHANGE_DEFAULT_DIALER_PACKAGE_NAME, context.packageName)
+        when (kind) {
+            DefaultApp.Sms -> {
+                @Suppress("DEPRECATION")
+                wanted += Intent(Telephony.Sms.Intents.ACTION_CHANGE_DEFAULT)
+                    .putExtra(Telephony.Sms.Intents.EXTRA_PACKAGE_NAME, context.packageName)
+            }
+            DefaultApp.Dialer -> {
+                wanted += Intent(TelecomManager.ACTION_CHANGE_DEFAULT_DIALER)
+                    .putExtra(TelecomManager.EXTRA_CHANGE_DEFAULT_DIALER_PACKAGE_NAME, context.packageName)
+            }
+            // Call screening has no legacy "change default" intent; the role dialog
+            // above is the only way to request it.
+            DefaultApp.CallScreening -> Unit
         }
         wanted += defaultAppsSettingsIntent()
         wanted += Intent(android.provider.Settings.ACTION_SETTINGS)
@@ -318,8 +328,28 @@ class TrinityState(private val context: Context, private val scope: CoroutineSco
     }
 
     /** Whether Trinity already holds the role behind [kind]. */
-    fun holdsDefault(kind: DefaultApp): Boolean =
-        if (kind == DefaultApp.Sms) isDefaultSmsApp() else isDefaultDialer()
+    fun holdsDefault(kind: DefaultApp): Boolean = when (kind) {
+        DefaultApp.Sms -> isDefaultSmsApp()
+        DefaultApp.Dialer -> isDefaultDialer()
+        DefaultApp.CallScreening -> isCallScreeningRoleHeld()
+    }
+
+    /**
+     * True only when the OS has made Trinity the call-screening app. The role and
+     * its class only exist on API 29+, so both the literal and the lookup stay
+     * inside the guard — the same mistake the SMS role once made on API 26.
+     */
+    fun isCallScreeningRoleHeld(): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val roleManager = context.getSystemService(RoleManager::class.java)
+            if (roleManager != null) {
+                return runCatching {
+                    roleManager.isRoleHeld(RoleManager.ROLE_CALL_SCREENING)
+                }.getOrDefault(false)
+            }
+        }
+        return false
+    }
 
     /** True when something on this device can actually open [intent]. */
     fun canHandle(intent: Intent?): Boolean =
