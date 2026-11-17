@@ -3,10 +3,13 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.draw.drawWithCache
 
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -578,16 +581,29 @@ fun MonoButton(
     filled: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
+    val motion = LocalMotionEnabled.current
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val pressScale by animateFloatAsState(
+        targetValue = if (motion && pressed) 0.97f else 1f,
+        animationSpec = Motion.alphaSpec(Motion.PRESS_MS, motion),
+        label = "mono-button-press",
+    )
     if (Palette.isMaterial) {
         val scheme = MaterialTheme.colorScheme
         Box(
             modifier = modifier
+                .graphicsLayer { scaleX = pressScale; scaleY = pressScale }
                 .height(40.dp)
                 .clip(RoundedCornerShape(20.dp))
                 .background(
                     if (filled && enabled) scheme.primary else scheme.surfaceContainerHighest,
                 )
-                .clickable(enabled = enabled) { onClick() }
+                .clickable(
+                    enabled = enabled,
+                    interactionSource = interaction,
+                    indication = null,
+                ) { onClick() }
                 .padding(horizontal = 18.dp),
             contentAlignment = Alignment.Center,
         ) {
@@ -608,11 +624,16 @@ fun MonoButton(
     val ink = if (enabled) Palette.Ink else Palette.Faint
     Box(
         modifier = modifier
+            .graphicsLayer { scaleX = pressScale; scaleY = pressScale }
             .height(36.dp)
             .clip(RoundedCornerShape(4.dp))
             .background(if (filled && enabled) Palette.Ink else Palette.Paper)
             .border(1.dp, if (filled && enabled) Palette.Ink else Palette.Line, RoundedCornerShape(4.dp))
-            .clickable(enabled = enabled) { onClick() }
+            .clickable(
+                enabled = enabled,
+                interactionSource = interaction,
+                indication = null,
+            ) { onClick() }
             .padding(horizontal = 14.dp),
         contentAlignment = Alignment.Center,
     ) {
