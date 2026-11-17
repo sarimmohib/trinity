@@ -2,6 +2,7 @@ package com.sarim.trinity.ui.components
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.draw.drawWithCache
 
+import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -27,6 +28,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -41,6 +43,7 @@ import androidx.compose.ui.graphics.Paint
 import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -54,6 +57,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.sarim.trinity.data.ContactPhotos
 import com.sarim.trinity.data.SimCard
+import com.sarim.trinity.ui.LocalMotionEnabled
+import com.sarim.trinity.ui.Motion
 import com.sarim.trinity.ui.theme.Palette
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -377,6 +382,11 @@ fun InkSheet(
     androidx.activity.compose.BackHandler(enabled = true) { onDismiss() }
     val material = Palette.isMaterial
     val scheme = MaterialTheme.colorScheme
+    val motion = LocalMotionEnabled.current
+    val sheetProgress = remember { Animatable(if (motion) 0f else 1f) }
+    LaunchedEffect(motion) {
+        if (motion) sheetProgress.animateTo(1f, Motion.alphaSpec(Motion.SHEET_MS, true))
+    }
     Box(
         Modifier
             .fillMaxWidth()
@@ -397,6 +407,10 @@ fun InkSheet(
                     ),
                 )
                 .background(if (material) scheme.surfaceContainerLow.copy(alpha = 0.94f) else Palette.Bone)
+                .graphicsLayer {
+                    alpha = sheetProgress.value
+                    translationY = (1f - sheetProgress.value) * 24f
+                }
                 .clickable(enabled = false) {}
                 .padding(bottom = if (material) 16.dp else 8.dp),
         ) {

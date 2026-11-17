@@ -1,0 +1,5 @@
+2.1.0
+
+- Added quiet screen transitions, sheet motion and press feedback, all under 240 ms and using GPU-friendly effects.
+- Added an Animations on/off switch in Settings → Appearance. Off means every state change is instant.
+- Kept the search-result flash; no animation runs while a list is scrolling.

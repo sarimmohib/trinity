@@ -434,6 +434,14 @@ fun SettingsScreen(
             onClick = { themeSheet = true },
         )
         SettingsRow(
+            label = "Animations",
+            value = if (state.motionEnabled) "ON" else "OFF",
+            sub = "SCREEN CHANGES, SHEETS AND BUTTON MOTION",
+            icon = Icons.Outlined.Smartphone,
+            toggle = state.motionEnabled,
+            onToggle = { state.setAnimationsEnabled(it) },
+        )
+        SettingsRow(
             label = "Text size",
             value = "SYSTEM",
             icon = Icons.Outlined.Info,

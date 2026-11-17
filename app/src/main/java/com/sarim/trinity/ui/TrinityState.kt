@@ -284,6 +284,15 @@ class TrinityState(private val context: Context, private val scope: CoroutineSco
     }.getOrDefault(emptyList())
 
     /** Which tab opens first. Calls until the user picks another in Settings. */
+    /** UI transitions and micro-animations. On by default, persisted like the other UI prefs. */
+    var motionEnabled by mutableStateOf(uiPrefs.getBoolean("motion_enabled", true))
+        private set
+
+    fun setAnimationsEnabled(enabled: Boolean) {
+        motionEnabled = enabled
+        uiPrefs.edit().putBoolean("motion_enabled", enabled).apply()
+    }
+
     var startTab by mutableStateOf(uiPrefs.getInt("start_tab", 0))
         private set
 
@@ -1243,6 +1252,7 @@ class TrinityState(private val context: Context, private val scope: CoroutineSco
     /** Re-reads every in-memory mirror of `trinity.ui` after a restore replaced the file. */
     private fun reloadUiSettings() {
         screeningSettings = ScreeningPrefs.load(context)
+        motionEnabled = uiPrefs.getBoolean("motion_enabled", true)
         startTab = uiPrefs.getInt("start_tab", 0)
         recentSearches = readRecentSearches()
         semanticEnabled = uiPrefs.getBoolean("semantic_search", false)

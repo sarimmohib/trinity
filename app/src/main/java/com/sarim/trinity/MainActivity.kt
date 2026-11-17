@@ -7,6 +7,14 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -35,6 +43,7 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -50,6 +59,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -57,6 +67,8 @@ import com.sarim.trinity.data.CallEntry
 import com.sarim.trinity.data.Conversation
 import com.sarim.trinity.data.Person
 import com.sarim.trinity.data.SmsLinks
+import com.sarim.trinity.ui.LocalMotionEnabled
+import com.sarim.trinity.ui.Motion
 import com.sarim.trinity.ui.TrinityState
 import com.sarim.trinity.ui.components.Hairline
 import com.sarim.trinity.ui.components.MonoLabel
@@ -161,6 +173,7 @@ private fun TrinityApp(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val state = remember { TrinityState(context, scope) }
+    val motionOn = state.motionEnabled
 
     var granted by remember { mutableStateOf(state.hasCorePermissions()) }
     var route by remember { mutableStateOf<Route>(Route.Tab(state.startTab)) }
@@ -256,6 +269,7 @@ private fun TrinityApp(
 
     BackHandler(enabled = route !is Route.Tab) { goBack() }
 
+    CompositionLocalProvider(LocalMotionEnabled provides state.motionEnabled) {
     Box(Modifier.fillMaxSize()) {
     Column(
         Modifier
@@ -265,7 +279,29 @@ private fun TrinityApp(
             .navigationBarsPadding(),
     ) {
         Box(Modifier.weight(1f)) {
-            when (val current = route) {
+            AnimatedContent(
+                targetState = route,
+                transitionSpec = {
+                    val ms = Motion.SCREEN_MS
+                    if (!motionOn) {
+                        fadeIn(animationSpec = snap<Float>()) togetherWith
+                            fadeOut(animationSpec = snap<Float>())
+                    } else {
+                        (fadeIn(animationSpec = tween<Float>(ms, easing = Motion.Easing)) +
+                            slideInHorizontally(
+                                animationSpec = tween<IntOffset>(ms, easing = Motion.Easing),
+                                initialOffsetX = { it / 14 },
+                            )) togetherWith
+                            (fadeOut(animationSpec = tween<Float>(ms, easing = Motion.Easing)) +
+                                slideOutVertically(
+                                    animationSpec = tween<IntOffset>(ms, easing = Motion.Easing),
+                                    targetOffsetY = { -it / 20 },
+                                ))
+                    }
+                },
+                label = "trinity-route",
+            ) { current ->
+                when (current) {
                 is Route.Tab -> when (current.index) {
                     0 -> CallsScreen(
                         state = state,
@@ -376,6 +412,7 @@ private fun TrinityApp(
                     },
                     onOpenContact = { go(Route.Contact(it)) },
                 )
+                }
             }
         }
 
@@ -394,6 +431,7 @@ private fun TrinityApp(
             onLater = { state.hideUpdate() },
             onSkip = { state.skipUpdate() },
         )
+    }
     }
     }
 }
