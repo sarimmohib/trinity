@@ -1,6 +1,7 @@
 package com.sarim.trinity.data
 
 import android.content.ContentProviderOperation
+import android.content.ContentUris
 import android.content.Context
 import android.provider.ContactsContract
 
@@ -127,6 +128,40 @@ object ContactWriter {
             "${ContactsContract.RawContacts.CONTACT_ID} = ?",
             arrayOf(contactId.toString()),
         ) > 0
+    }.getOrDefault(false)
+
+    /**
+     * Flips the provider's own STARRED column for one contact. Targets the contact by
+     * id through a single update operation, so favourites survive restart and sync.
+     */
+    fun setStarred(context: Context, person: Person, starred: Boolean): Boolean = runCatching {
+        val uri = ContentUris.withAppendedId(ContactsContract.Contacts.CONTENT_URI, person.id)
+        val op = ContentProviderOperation.newUpdate(uri)
+            .withValue(ContactsContract.Contacts.STARRED, if (starred) 1 else 0)
+            .build()
+        context.contentResolver.applyBatch(ContactsContract.AUTHORITY, arrayListOf(op))
+        true
+    }.getOrDefault(false)
+
+    /**
+     * Joins two contacts into one aggregate with AggregationExceptions. This never
+     * deletes either contact — the provider owns the merge and keeps both raw rows.
+     */
+    fun merge(context: Context, keep: Person, drop: Person): Boolean = runCatching {
+        val keepRaw = rawContactId(context, keep)
+        val dropRaw = rawContactId(context, drop)
+        if (keepRaw <= 0L || dropRaw <= 0L) return@runCatching false
+        val op = ContentProviderOperation
+            .newInsert(ContactsContract.AggregationExceptions.CONTENT_URI)
+            .withValue(
+                ContactsContract.AggregationExceptions.TYPE,
+                ContactsContract.AggregationExceptions.TYPE_KEEP_TOGETHER,
+            )
+            .withValue(ContactsContract.AggregationExceptions.RAW_CONTACT_ID1, keepRaw)
+            .withValue(ContactsContract.AggregationExceptions.RAW_CONTACT_ID2, dropRaw)
+            .build()
+        context.contentResolver.applyBatch(ContactsContract.AUTHORITY, arrayListOf(op))
+        true
     }.getOrDefault(false)
 
     fun rawContactId(context: Context, person: Person): Long {

@@ -22,6 +22,7 @@ import com.sarim.trinity.data.BlockStore
 import com.sarim.trinity.data.CallEntry
 import com.sarim.trinity.data.CallsRepository
 import com.sarim.trinity.data.CompoundRule
+import com.sarim.trinity.data.ContactGroup
 import com.sarim.trinity.data.ContactPhotos
 import com.sarim.trinity.data.ContactWriter
 import com.sarim.trinity.data.ContactsRepository
@@ -398,6 +399,11 @@ class TrinityState(private val context: Context, private val scope: CoroutineSco
             smsProviderMissing = !present
         }
         val people = contactsRepo.load()
+        // Groups are read-only here: mirror the provider's list so the filter chips
+        // can be composed synchronously without ever querying on the main thread.
+        contactGroupsSnapshot = withContext(Dispatchers.IO) {
+            runCatching { contactsRepo.groups() }.getOrDefault(emptyList())
+        }
         // A photo changed elsewhere keeps its uri, so the decoded copies go
         // whenever the contacts themselves are read again.
         ContactPhotos.clearCache()
@@ -418,6 +424,10 @@ class TrinityState(private val context: Context, private val scope: CoroutineSco
         calls = callsRepo.load(rules = rules, names = names, cards = cards)
         blockedMessages = messagesRepo.blockedMessages(names, rules)
         held = withContext(Dispatchers.IO) { quarantine.all() }
+        // Keep the home-screen counts in step with the app's own refresh.
+        withContext(Dispatchers.IO) {
+            runCatching { com.sarim.trinity.widget.TrinityWidgetProvider.refresh(context) }
+        }
         openThreadId?.let { id -> messages = messagesRepo.messages(id, rules) }
         refreshScheduled()
         lastRefreshAt = SystemClock.elapsedRealtime()
@@ -529,6 +539,59 @@ class TrinityState(private val context: Context, private val scope: CoroutineSco
             withContext(Dispatchers.IO) { ContactWriter.delete(context, person.id) }
             refresh()
             onDone()
+        }
+    }
+
+    // --- contacts: favourites, groups and duplicates (M6) ---
+
+    /**
+     * The provider's groups, mirrored on every [refresh] so the filter chips can
+     * read them without a provider query. Groups are edited in the system contacts
+     * app; Trinity only filters by them.
+     */
+    private var contactGroupsSnapshot by mutableStateOf<List<ContactGroup>>(emptyList())
+
+    fun contactGroups(): List<ContactGroup> = contactGroupsSnapshot
+
+    /** Result of the last star or merge write, shown once when there is one. */
+    var contactNote by mutableStateOf<String?>(null)
+        private set
+
+    fun clearContactNote() {
+        contactNote = null
+    }
+
+    /**
+     * Flips Contacts.STARRED through the provider. Contacts are re-read only when
+     * the write was accepted, so the star never reports success for a failed write.
+     */
+    fun toggleStar(person: Person) {
+        scope.launch {
+            val starred = !person.starred
+            val ok = withContext(Dispatchers.IO) {
+                runCatching { ContactWriter.setStarred(context, person, starred) }
+                    .getOrDefault(false)
+            }
+            if (ok) {
+                refresh()
+                contactNote = if (starred) "ADDED TO FAVOURITES" else "REMOVED FROM FAVOURITES"
+            }
+        }
+    }
+
+    /**
+     * Links two duplicate contacts through the provider. Nothing is deleted: the
+     * two raw records stay in the book, linked so they share one aggregate.
+     */
+    fun mergeContacts(keep: Person, drop: Person) {
+        scope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                runCatching { ContactWriter.merge(context, keep, drop) }.getOrDefault(false)
+            }
+            if (ok) {
+                refresh()
+                contactNote = "CONTACTS LINKED"
+            }
         }
     }
 

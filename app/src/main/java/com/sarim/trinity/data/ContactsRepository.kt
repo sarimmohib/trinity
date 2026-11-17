@@ -59,6 +59,10 @@ class ContactsRepository(private val context: Context) {
         }
 
         val emails = emailMap()
+        // Two bounded queries for the extra flags — never one per contact. The cheap
+        // projection and ordering above stay untouched.
+        val starredIds = starredContactIds()
+        val memberships = groupMemberships()
         names.map { (id, name) ->
             val list = numbers[id].orEmpty()
             Person(
@@ -69,8 +73,80 @@ class ContactsRepository(private val context: Context) {
                 numbers = list,
                 emails = emails[id].orEmpty(),
                 photoUri = photos[id],
+                starred = id in starredIds,
+                groupIds = memberships[id]?.toSet() ?: emptySet(),
             )
         }
+    }
+
+    /** One query for every starred contact id; bounded by the size of the address book. */
+    private fun starredContactIds(): Set<Long> {
+        val out = HashSet<Long>()
+        runCatching {
+            context.contentResolver.query(
+                ContactsContract.Contacts.CONTENT_URI,
+                arrayOf(ContactsContract.Contacts._ID),
+                "${ContactsContract.Contacts.STARRED} = 1",
+                null,
+                null,
+            )?.use { cursor ->
+                val idColumn = cursor.getColumnIndex(ContactsContract.Contacts._ID)
+                if (idColumn >= 0) {
+                    while (cursor.moveToNext()) out += cursor.getLong(idColumn)
+                }
+            }
+        }
+        return out
+    }
+
+    /** One query for every (contact, group) membership row — no per-contact queries. */
+    private fun groupMemberships(): Map<Long, MutableSet<Long>> {
+        val out = HashMap<Long, MutableSet<Long>>()
+        runCatching {
+            context.contentResolver.query(
+                ContactsContract.Data.CONTENT_URI,
+                arrayOf(
+                    ContactsContract.Data.CONTACT_ID,
+                    ContactsContract.CommonDataKinds.GroupMembership.GROUP_ROW_ID,
+                ),
+                "${ContactsContract.Data.MIMETYPE} = ?",
+                arrayOf(ContactsContract.CommonDataKinds.GroupMembership.CONTENT_ITEM_TYPE),
+                null,
+            )?.use { cursor ->
+                val contactColumn = cursor.getColumnIndex(
+                    ContactsContract.Data.CONTACT_ID,
+                )
+                val groupColumn = cursor.getColumnIndex(
+                    ContactsContract.CommonDataKinds.GroupMembership.GROUP_ROW_ID,
+                )
+                if (contactColumn >= 0 && groupColumn >= 0) {
+                    while (cursor.moveToNext()) {
+                        val contactId = cursor.getLong(contactColumn)
+                        val groupId = cursor.getLong(groupColumn)
+                        out.getOrPut(contactId) { LinkedHashSet() }.add(groupId)
+                    }
+                }
+            }
+        }
+        return out
+    }
+
+    /** Every non-deleted group in the address book, sorted by title. Read-only. */
+    suspend fun groups(): List<ContactGroup> = withContext(Dispatchers.IO) {
+        if (!hasPermission()) return@withContext emptyList()
+        runCatching {
+            context.contentResolver.query(
+                ContactsContract.Groups.CONTENT_URI,
+                ContactGroups.projection,
+                ContactGroups.selection,
+                null,
+                ContactGroups.sortOrder,
+            )?.use { cursor ->
+                val out = ArrayList<ContactGroup>()
+                while (cursor.moveToNext()) out += ContactGroups.from(cursor)
+                out
+            }.orEmpty()
+        }.getOrDefault(emptyList())
     }
 
     private fun emailMap(): Map<Long, List<String>> {

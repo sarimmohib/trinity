@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,24 +20,31 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -45,6 +53,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.sarim.trinity.data.BlockMatcher
+import com.sarim.trinity.data.ContactDuplicates
 import com.sarim.trinity.data.Person
 import com.sarim.trinity.ui.TrinityState
 import com.sarim.trinity.ui.components.BottomAction
@@ -81,6 +90,12 @@ fun ContactsScreen(
     var confirmBulkDelete by remember { mutableStateOf(false) }
     val clipboard = LocalClipboardManager.current
 
+    // M6: groups are read-only. Membership is already on each Person, so the
+    // filter is an in-memory check — Trinity never edits groups across accounts.
+    val groups = state.contactGroups()
+    var selectedGroup by remember { mutableStateOf<Long?>(null) }
+    var showDuplicates by remember { mutableStateOf(false) }
+
     // A contact added anywhere else must be here when the tab comes back.
     LaunchedEffect(Unit) { state.refreshIfStale() }
 
@@ -93,11 +108,17 @@ fun ContactsScreen(
     }
     val blockedCount = blockedIds.size
     val needle = query.trim()
+    // Group membership is read from the contact snapshot, so filtering never
+    // touches the provider. null means the ALL chip: no restriction at all.
+    val groupFiltered = remember(state.contacts, selectedGroup) {
+        val id = selectedGroup
+        if (id == null) state.contacts else state.contacts.filter { id in it.groupIds }
+    }
     // Searched and sectioned once per contact list and query, not on every
     // recomposition (a selection change redoes the whole address book otherwise).
-    val filtered = remember(state.contacts, query) {
+    val filtered = remember(groupFiltered, query) {
         val digits = query.filter { it.isDigit() }
-        state.contacts.filter { person ->
+        groupFiltered.filter { person ->
             when {
                 query.isBlank() -> true
                 person.name.contains(needle, ignoreCase = true) -> true
@@ -110,6 +131,9 @@ fun ContactsScreen(
         }
     }
     val sections = remember(filtered) { filtered.groupBy { it.section }.toSortedMap() }
+    // Starred contacts are pinned above the alphabetical book. They stay in the
+    // book too, so the same person appears once in each part of the list.
+    val favourites = remember(filtered) { filtered.filter { it.starred } }
     val picked = if (selection.active) filtered.filter { selection.contains(it) } else emptyList()
 
     // Back drops the selection before it leaves the tab.
@@ -131,34 +155,49 @@ fun ContactsScreen(
                     style = androidx.compose.material3.MaterialTheme.typography.displaySmall,
                     color = Palette.Ink,
                 )
-                Box(
-                    modifier = Modifier
-                        .size(26.dp)
-                        .border(1.dp, Palette.Line, RoundedCornerShape(3.dp))
-                        .clickable(onClickLabel = "Open unified search") { onSearch() },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        Icons.Outlined.Search,
-                        contentDescription = "Search calls, texts and contacts",
-                        tint = Palette.Ink,
-                        modifier = Modifier.size(14.dp),
-                    )
-                }
-                Spacer(Modifier.width(6.dp))
-                Box(
-                    modifier = Modifier
-                        .size(26.dp)
-                        .border(1.dp, Palette.Line, RoundedCornerShape(3.dp))
-                        .clickable { onSettings() },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        Icons.Outlined.Settings,
-                        contentDescription = "Settings",
-                        tint = Palette.Ink,
-                        modifier = Modifier.size(14.dp),
-                    )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .height(26.dp)
+                            .border(1.dp, Palette.Line, RoundedCornerShape(3.dp))
+                            .clickable(onClickLabel = "Find duplicate contacts") {
+                                showDuplicates = true
+                            }
+                            .padding(horizontal = 9.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        MonoLabel(uiLabel("FIND DUPLICATES"), color = Palette.Ink, size = 8)
+                    }
+                    Spacer(Modifier.width(6.dp))
+                    Box(
+                        modifier = Modifier
+                            .size(26.dp)
+                            .border(1.dp, Palette.Line, RoundedCornerShape(3.dp))
+                            .clickable(onClickLabel = "Open unified search") { onSearch() },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            Icons.Outlined.Search,
+                            contentDescription = "Search calls, texts and contacts",
+                            tint = Palette.Ink,
+                            modifier = Modifier.size(14.dp),
+                        )
+                    }
+                    Spacer(Modifier.width(6.dp))
+                    Box(
+                        modifier = Modifier
+                            .size(26.dp)
+                            .border(1.dp, Palette.Line, RoundedCornerShape(3.dp))
+                            .clickable(onClickLabel = "Open settings") { onSettings() },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            Icons.Outlined.Settings,
+                            contentDescription = "Settings",
+                            tint = Palette.Ink,
+                            modifier = Modifier.size(14.dp),
+                        )
+                    }
                 }
             }
             Spacer(Modifier.height(5.dp))
@@ -205,6 +244,30 @@ fun ContactsScreen(
             }
         }
 
+        // Read-only group filter. ALL clears the restriction; every other chip
+        // keeps only contacts whose groupIds contain that group's id.
+        if (groups.isNotEmpty()) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                GroupChip("ALL", selectedGroup == null, "Show all contacts") {
+                    selectedGroup = null
+                }
+                groups.forEach { group ->
+                    GroupChip(
+                        group.name,
+                        selectedGroup == group.id,
+                        "Filter contacts by ${group.name}",
+                    ) { selectedGroup = group.id }
+                }
+            }
+        }
+
         Box(Modifier.weight(1f)) {
             when {
                 state.contacts.isEmpty() -> EmptyNote("No contacts yet.")
@@ -219,6 +282,29 @@ fun ContactsScreen(
                             bottom = if (selection.active) 128.dp else 92.dp,
                         ),
                     ) {
+                        if (favourites.isNotEmpty()) {
+                            stickyHeader(key = "header-favourites", contentType = "header") {
+                                FavouritesHeader(favourites.size)
+                            }
+                            items(
+                                favourites,
+                                key = { "fav-${it.id}" },
+                                contentType = { "person" },
+                            ) { person ->
+                                val blocked = person.id in blockedIds
+                                PersonRow(
+                                    person = person,
+                                    blocked = blocked,
+                                    selecting = selection.active,
+                                    selected = selection.contains(person),
+                                    onClick = {
+                                        if (selection.active) selection.toggle(person)
+                                        else onOpenPerson(person)
+                                    },
+                                    onLongPress = { selection.start(person) },
+                                )
+                            }
+                        }
                         sections.forEach { (letter, people) ->
                             stickyHeader(key = "header-$letter", contentType = "header") {
                                 SectionHeader(letter, people.size)
@@ -246,7 +332,9 @@ fun ContactsScreen(
                     // Alphabet index: a thumb-reachable jump for a long book.
                     if (sections.size > 4) {
                         val starts = LinkedHashMap<Char, Int>()
-                        var running = 0
+                        // The pinned FAVOURITES header and its rows come before the
+                        // first letter, so every alphabetical index shifts by them.
+                        var running = if (favourites.isEmpty()) 0 else 1 + favourites.size
                         sections.forEach { (letter, people) ->
                             starts[letter] = running
                             running += 1 + people.size
@@ -265,7 +353,7 @@ fun ContactsScreen(
                                     fontSize = 9.sp,
                                     color = Palette.Faint,
                                     modifier = Modifier
-                                        .clickable {
+                                        .clickable(onClickLabel = "Jump to section $letter") {
                                             scope.launch { listState.scrollToItem(target) }
                                         }
                                         .padding(horizontal = 5.dp, vertical = 3.dp),
@@ -334,6 +422,61 @@ fun ContactsScreen(
             ),
             onDismiss = { confirmBulkDelete = false },
         )
+    }
+
+    if (showDuplicates) {
+        val pairs = ContactDuplicates.candidates(state.contacts).take(20)
+        InkSheet(
+            title = "DUPLICATE CONTACTS",
+            actions = pairs.flatMap { (a, b) ->
+                val hint = if (ContactDuplicates.isStrong(a, b)) "SAME NUMBER" else "SAME NAME"
+                listOf(
+                    SheetAction("Keep ${a.name} · merge ${b.name}", hint) {
+                        state.mergeContacts(a, b)
+                        showDuplicates = false
+                    },
+                    SheetAction("Keep ${b.name} · merge ${a.name}", hint) {
+                        state.mergeContacts(b, a)
+                        showDuplicates = false
+                    },
+                )
+            } + listOf(
+                SheetAction(
+                    if (pairs.isEmpty()) "No duplicates found" else "Close",
+                ) { showDuplicates = false },
+            ),
+            onDismiss = { showDuplicates = false },
+        )
+    }
+}
+
+@Composable
+private fun GroupChip(label: String, active: Boolean, description: String, onClick: () -> Unit) {
+    Box(
+        Modifier
+            .height(34.dp)
+            .background(if (active) Palette.Ink else Palette.Bone, RoundedCornerShape(4.dp))
+            .border(1.dp, if (active) Palette.Ink else Palette.Line, RoundedCornerShape(4.dp))
+            .clickable(onClickLabel = description) { onClick() }
+            .padding(horizontal = 12.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        MonoLabel(label.uppercase(), size = 8, color = if (active) Palette.Paper else Palette.Ink)
+    }
+}
+
+@Composable
+private fun FavouritesHeader(count: Int) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .background(Palette.Bone)
+            .padding(horizontal = 24.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        MonoLabel("FAVOURITES", color = Palette.Ink, size = 9)
+        Spacer(Modifier.width(8.dp))
+        MonoLabel("$count", color = Palette.Faint, size = 8)
     }
 }
 

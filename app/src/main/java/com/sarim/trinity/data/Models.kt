@@ -20,6 +20,10 @@ data class Person(
     val emails: List<String> = emptyList(),
     /** The provider's photo for this contact, when one is set. */
     val photoUri: String? = null,
+    /** Contacts.STARRED — the user's favourite flag, owned by the provider. */
+    val starred: Boolean = false,
+    /** Ids of the ContactsContract groups this contact belongs to. Read-only. */
+    val groupIds: Set<Long> = emptySet(),
 ) {
     val initials: String
         get() = name.trim().split(" ", "  ")

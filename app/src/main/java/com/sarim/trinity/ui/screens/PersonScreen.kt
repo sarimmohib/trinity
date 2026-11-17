@@ -33,6 +33,8 @@ import androidx.compose.material.icons.outlined.Phone
 import androidx.compose.material.icons.outlined.PhoneInTalk
 import androidx.compose.material.icons.outlined.PhoneMissed
 import androidx.compose.material.icons.outlined.Shield
+import androidx.compose.material.icons.outlined.Star
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -130,6 +132,22 @@ fun PersonScreen(
         ) {
             MonoLabel("CONTACT", size = 9)
             Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier
+                        .size(48.dp)
+                        .clickable(onClickLabel = if (person.starred) "Remove from favourites" else "Add to favourites") {
+                            state.toggleStar(person)
+                        },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        if (person.starred) Icons.Filled.Star else Icons.Outlined.Star,
+                        contentDescription = if (person.starred) "Remove from favourites" else "Add to favourites",
+                        tint = if (person.starred) Palette.Blue else Palette.Ink,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+                Spacer(Modifier.width(16.dp))
                 Icon(
                     Icons.Outlined.Edit,
                     contentDescription = "Edit contact",
