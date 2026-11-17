@@ -25,6 +25,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" />
     <uses-permission android:name="android.permission.MANAGE_OWN_CALLS" />
+    <!-- Binding the system call-screening service requires this permission. -->
     <!-- The contact screen reports whether the phone's contacts are syncing. -->
     <uses-permission android:name="android.permission.READ_SYNC_SETTINGS" />
     <!-- Only used to ask GitHub's public API for the latest release of Trinity. -->
@@ -138,6 +139,17 @@
                 android:value="true" />
             <intent-filter>
                 <action android:name="android.telecom.InCallService" />
+            </intent-filter>
+        </service>
+
+        <!-- Call screening: only bound while the user grants ROLE_CALL_SCREENING (API 29+).
+             Decides whether an incoming call rings, is silenced, or is rejected. -->
+        <service
+            android:name=".call.TrinityCallScreeningService"
+            android:exported="true"
+            android:permission="android.permission.BIND_SCREENING_SERVICE">
+            <intent-filter>
+                <action android:name="android.telecom.CallScreeningService" />
             </intent-filter>
         </service>
 
