@@ -27,6 +27,7 @@ import com.sarim.trinity.data.ContactPhotos
 import com.sarim.trinity.data.ContactWriter
 import com.sarim.trinity.data.ContactsRepository
 import com.sarim.trinity.data.Conversation
+import com.sarim.trinity.data.EmbeddingStore
 import com.sarim.trinity.data.isMmsMessageId
 import com.sarim.trinity.data.Message
 import com.sarim.trinity.data.MessageBackup
@@ -53,10 +54,12 @@ import com.sarim.trinity.data.ThreadPrefs
 import com.sarim.trinity.data.UpdateChecker
 import com.sarim.trinity.data.UpdateNotifier
 import com.sarim.trinity.data.VCards
+import com.sarim.trinity.ml.EmbeddingEngine
 import com.sarim.trinity.sms.MessageNotifier
 import com.sarim.trinity.sms.SmsSender
 import com.sarim.trinity.sms.holdsSmsRole
 import com.sarim.trinity.data.ScheduleDispatcher
+import java.security.MessageDigest
 import java.util.UUID
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -65,6 +68,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.yield
 import org.json.JSONArray
 
 /**
@@ -77,6 +81,7 @@ class TrinityState(private val context: Context, private val scope: CoroutineSco
     val blockStore = BlockStore.get(context)
     private val contactsRepo = ContactsRepository(context)
     private val messagesRepo = MessagesRepository(context)
+    private val embeddingStore = EmbeddingStore(context)
     private val callsRepo = CallsRepository(context)
     private val sims = Sims(context)
     private val quarantine = QuarantineStore(context)
@@ -94,6 +99,8 @@ class TrinityState(private val context: Context, private val scope: CoroutineSco
         val messages: List<MessageHit> = emptyList(),
         val calls: List<CallEntry> = emptyList(),
         val contacts: List<Person> = emptyList(),
+        /** Similar-meaning texts from the on-device index, kept separate from exact hits. */
+        val related: List<MessageHit> = emptyList(),
     )
 
     var searchQuery by mutableStateOf("")
@@ -106,6 +113,10 @@ class TrinityState(private val context: Context, private val scope: CoroutineSco
      * Debounced provider work for the unified search field. A query shorter than
      * three characters clears the results instead of querying: number matching on
      * a digit or two would match almost every row in the phone's stores.
+     *
+     * Semantic hits are appended in their own section after the keyword results. They
+     * never replace, reorder or hide an exact match — [SearchResults.messages] is always
+     * the untouched keyword ranking.
      */
     fun updateSearch(query: String) {
         searchQuery = query
@@ -120,14 +131,137 @@ class TrinityState(private val context: Context, private val scope: CoroutineSco
             val rules = blockStore.rules.value
             val names = contacts.associate { it.number to it.name }
             val found = withContext(Dispatchers.IO) {
+                val keywordMessages = Search.messages(context, needle, rules, names)
                 SearchResults(
-                    messages = Search.messages(context, needle, rules, names),
+                    messages = keywordMessages,
                     calls = Search.calls(needle, calls),
                     contacts = Search.contacts(needle, contacts),
+                    related = similarMessages(needle, keywordMessages, rules, names),
                 )
             }
             // A newer keystroke replaced this job while the providers were being read.
             if (isActive) searchResults = found
+        }
+    }
+
+    /**
+     * On-device semantic hits for [needle], or an empty list when the feature is off,
+     * the model is missing, or nothing has been indexed yet. Runs inside the search's
+     * Dispatchers.IO block; never hides a keyword match (those ids are filtered out of
+     * RELATED only, and stay in the MESSAGES section).
+     */
+    private fun similarMessages(
+        needle: String,
+        keywordMessages: List<MessageHit>,
+        rules: BlockStore.Rules,
+        names: Map<String, String>,
+    ): List<MessageHit> {
+        if (!semanticEnabled || !EmbeddingEngine.isAvailable(context)) return emptyList()
+        if (indexedCount <= 0) return emptyList()
+        return runCatching {
+            val queryVector = EmbeddingEngine.embed(context, listOf(needle)).firstOrNull()
+                ?: return@runCatching emptyList()
+            val near = embeddingStore.nearest(queryVector, limit = SIMILAR_LIMIT)
+                .filter { it.second >= SIMILAR_THRESHOLD }
+            if (near.isEmpty()) return@runCatching emptyList()
+            val byId = Search.hitsByIds(context, near.map { it.first }, rules, names)
+            val keywordIds = keywordMessages.map { it.message.id }.toSet()
+            // Preserve cosine order; drop ids already shown as exact matches.
+            near.mapNotNull { (id, _) -> byId[id] }
+                .filterNot { it.message.id in keywordIds }
+        }.getOrDefault(emptyList())
+    }
+
+    // --- on-device semantic search (M8B) ---
+
+    /** Opt-in, persisted in trinity.ui. Off unless the user turns it on. */
+    var semanticEnabled by mutableStateOf(uiPrefs.getBoolean("semantic_search", false))
+        private set
+
+    /** Human-readable progress, e.g. "INDEXED 1200/5000". */
+    var indexStatus by mutableStateOf("NOT INDEXED")
+        private set
+
+    /** Number of vectors currently stored, mirrored off the main thread. */
+    var indexedCount by mutableStateOf(0)
+        private set
+
+    /** Cancelled and replaced whenever a rebuild starts, so work never stacks up. */
+    private var indexJob: Job? = null
+
+    fun setSemanticSearch(enabled: Boolean) {
+        semanticEnabled = enabled
+        uiPrefs.edit().putBoolean("semantic_search", enabled).apply()
+        if (!enabled) {
+            indexJob?.cancel()
+            indexJob = null
+            // Nothing semantic is offered while the switch is off.
+            searchResults = searchResults.copy(related = emptyList())
+            indexStatus = "OFF"
+        } else if (EmbeddingEngine.isAvailable(context)) {
+            rebuildEmbeddingIndex()
+        } else {
+            indexStatus = "MODEL UNAVAILABLE"
+        }
+    }
+
+    /** Re-embeds messages on Dispatchers.IO. Safe to call repeatedly; skips unchanged rows. */
+    fun rebuildEmbeddingIndex() {
+        if (!semanticEnabled) return
+        indexJob?.cancel()
+        indexJob = scope.launch {
+            withContext(Dispatchers.IO) {
+                runCatching { buildEmbeddingIndex() }
+            }
+        }
+    }
+
+    private suspend fun buildEmbeddingIndex() {
+        if (!EmbeddingEngine.isAvailable(context)) {
+            indexStatus = "MODEL UNAVAILABLE"
+            return
+        }
+        if (!messagesRepo.hasPermission()) {
+            indexStatus = "NO SMS PERMISSION"
+            return
+        }
+        val messages = messagesRepo.allForEmbedding()
+        if (messages.isEmpty()) {
+            indexedCount = embeddingStore.count()
+            indexStatus = "NO MESSAGES TO INDEX"
+            return
+        }
+
+        // Resumable: a message keeps its vector while its body hash is unchanged.
+        val existing = embeddingStore.indexedHashes()
+        val currentIds = messages.map { it.first }.toSet()
+        existing.keys.filterNot { it in currentIds }.forEach { embeddingStore.delete(it) }
+        val pending = messages.mapNotNull { (id, body) ->
+            val hash = sha256(body)
+            if (existing[id] == hash) null else Triple(id, body, hash)
+        }.take(MAX_INDEX_MESSAGES)
+        val total = messages.size
+
+        // Batches keep model calls short; yield after each one so a swipe or a new
+        // search can cancel the job and the UI keeps responding.
+        pending.chunked(EMBED_BATCH_SIZE).forEach { batch ->
+            val vectors = EmbeddingEngine.embed(context, batch.map { it.second })
+            batch.forEachIndexed { i, (id, _, hash) ->
+                if (i < vectors.size) embeddingStore.upsert(id, hash, vectors[i])
+            }
+            indexedCount = embeddingStore.count()
+            indexStatus = "INDEXED $indexedCount/$total"
+            yield()
+        }
+        indexedCount = embeddingStore.count()
+        indexStatus = "INDEXED $indexedCount/$total"
+    }
+
+    /** SHA-256 of the UTF-8 body, hex encoded — stable across process restarts. */
+    private fun sha256(text: String): String {
+        val bytes = MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8))
+        return buildString(bytes.size * 2) {
+            bytes.forEach { append("%02x".format(it)) }
         }
     }
 
@@ -427,6 +561,8 @@ class TrinityState(private val context: Context, private val scope: CoroutineSco
         calls = callsRepo.load(rules = rules, names = names, cards = cards)
         blockedMessages = messagesRepo.blockedMessages(names, rules)
         held = withContext(Dispatchers.IO) { quarantine.all() }
+        // Mirror the index size off main so Settings never reads SQLite in composition.
+        indexedCount = withContext(Dispatchers.IO) { embeddingStore.count() }
         // Keep the home-screen counts in step with the app's own refresh.
         withContext(Dispatchers.IO) {
             runCatching { com.sarim.trinity.widget.TrinityWidgetProvider.refresh(context) }
@@ -1109,6 +1245,8 @@ class TrinityState(private val context: Context, private val scope: CoroutineSco
         screeningSettings = ScreeningPrefs.load(context)
         startTab = uiPrefs.getInt("start_tab", 0)
         recentSearches = readRecentSearches()
+        semanticEnabled = uiPrefs.getBoolean("semantic_search", false)
+        if (!semanticEnabled) indexStatus = "OFF"
     }
 
     suspend fun exportSettings(uri: Uri) {
@@ -1323,5 +1461,17 @@ class TrinityState(private val context: Context, private val scope: CoroutineSco
     private companion object {
         /** A read this recent is as good as a new one for a tab that has just opened. */
         const val FRESH_MS = 3_000L
+
+        /** Model calls per batch while indexing; small enough to stay responsive. */
+        const val EMBED_BATCH_SIZE = 16
+
+        /** Mirrors MessagesRepository's provider cap — total work is bounded. */
+        const val MAX_INDEX_MESSAGES = 20_000
+
+        /** Minimum cosine similarity for a RELATED hit. */
+        const val SIMILAR_THRESHOLD = 0.55f
+
+        /** Hard cap on RELATED results. */
+        const val SIMILAR_LIMIT = 5
     }
 }

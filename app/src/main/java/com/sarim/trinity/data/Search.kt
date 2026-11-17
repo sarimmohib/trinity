@@ -192,6 +192,123 @@ object Search {
             .map { it.second }
     }
 
+    /**
+     * Full hits for a small set of ids that came back from the local embedding index.
+     * MMS ids carry the same far-negative shift as everywhere else, so they are turned
+     * back into provider ids before the query. Called off the main thread from
+     * TrinityState; the caller preserves the caller's similarity order.
+     */
+    fun hitsByIds(
+        context: Context,
+        ids: Collection<Long>,
+        rules: BlockStore.Rules,
+        names: Map<String, String> = emptyMap(),
+    ): Map<Long, MessageHit> {
+        if (ids.isEmpty()) return emptyMap()
+        val wanted = ids.toSet()
+        val out = HashMap<Long, MessageHit>()
+        val smsIds = wanted.filter { it > 0 && !isMmsMessageId(it) }.map { it.toString() }
+        val mmsIds = wanted.filter { isMmsMessageId(it) }
+            .map { (it - MMS_ID_OFFSET).toString() }
+
+        if (smsIds.isNotEmpty()) {
+            runCatching {
+                val projection = arrayOf(
+                    Telephony.Sms._ID,
+                    Telephony.Sms.ADDRESS,
+                    Telephony.Sms.BODY,
+                    Telephony.Sms.DATE,
+                    Telephony.Sms.TYPE,
+                    Telephony.Sms.THREAD_ID,
+                )
+                val marks = smsIds.joinToString(",") { "?" }
+                context.contentResolver.query(
+                    Telephony.Sms.CONTENT_URI,
+                    projection,
+                    "${Telephony.Sms._ID} IN ($marks)",
+                    smsIds.toTypedArray(),
+                    null,
+                )?.use { cursor ->
+                    val idAt = cursor.getColumnIndexOrThrow(Telephony.Sms._ID)
+                    val addressAt = cursor.getColumnIndexOrThrow(Telephony.Sms.ADDRESS)
+                    val bodyAt = cursor.getColumnIndexOrThrow(Telephony.Sms.BODY)
+                    val dateAt = cursor.getColumnIndexOrThrow(Telephony.Sms.DATE)
+                    val typeAt = cursor.getColumnIndexOrThrow(Telephony.Sms.TYPE)
+                    val threadAt = cursor.getColumnIndexOrThrow(Telephony.Sms.THREAD_ID)
+                    while (cursor.moveToNext()) {
+                        val id = cursor.getLong(idAt)
+                        if (id !in wanted) continue
+                        val address = cursor.getString(addressAt).orEmpty()
+                        val body = cursor.getString(bodyAt).orEmpty()
+                        val name = names[address]
+                        val message = Message(
+                            id = id,
+                            address = address,
+                            body = body,
+                            date = cursor.getLong(dateAt),
+                            outgoing = isOutgoingSms(cursor.getInt(typeAt)),
+                            rule = BlockMatcher.match(name, address, body, rules, Scope.Texts),
+                        )
+                        out[id] = MessageHit(message, cursor.getLong(threadAt), preview(body))
+                    }
+                }
+            }
+        }
+
+        if (mmsIds.isNotEmpty()) {
+            runCatching {
+                val projection = arrayOf(
+                    Telephony.Mms._ID,
+                    Telephony.Mms.THREAD_ID,
+                    Telephony.Mms.SUBJECT,
+                    "text",
+                    Telephony.Mms.DATE,
+                    Telephony.Mms.MESSAGE_TYPE,
+                )
+                val marks = mmsIds.joinToString(",") { "?" }
+                context.contentResolver.query(
+                    Telephony.Mms.CONTENT_URI,
+                    projection,
+                    "${Telephony.Mms._ID} IN ($marks)",
+                    mmsIds.toTypedArray(),
+                    null,
+                )?.use { cursor ->
+                    val idAt = cursor.getColumnIndexOrThrow(Telephony.Mms._ID)
+                    val threadAt = cursor.getColumnIndexOrThrow(Telephony.Mms.THREAD_ID)
+                    val subjectAt = cursor.getColumnIndex(Telephony.Mms.SUBJECT)
+                    val textAt = cursor.getColumnIndex("text")
+                    val dateAt = cursor.getColumnIndexOrThrow(Telephony.Mms.DATE)
+                    val typeAt = cursor.getColumnIndexOrThrow(Telephony.Mms.MESSAGE_TYPE)
+                    while (cursor.moveToNext()) {
+                        val providerId = cursor.getLong(idAt)
+                        val shiftedId = MMS_ID_OFFSET + providerId
+                        if (shiftedId !in wanted) continue
+                        val incoming = cursor.getInt(typeAt) == MMS_TYPE_INCOMING
+                        val address = mmsAddress(context, providerId, incoming)
+                        val subject = if (subjectAt >= 0) cursor.getString(subjectAt) else null
+                        val text = if (textAt >= 0) cursor.getString(textAt) else null
+                        val body = mmsBody(subject, text)
+                        val name = names[address]
+                        val message = Message(
+                            id = shiftedId,
+                            address = address,
+                            body = body,
+                            date = mmsDateToMillis(cursor.getLong(dateAt)),
+                            outgoing = !incoming,
+                            rule = BlockMatcher.match(name, address, body, rules, Scope.Texts),
+                            mmsId = providerId,
+                        )
+                        out[shiftedId] = MessageHit(message, cursor.getLong(threadAt), preview(body))
+                    }
+                }
+            }
+        }
+        return out
+    }
+
+    /** The text a semantic hit shows — no literal query to window around. */
+    private fun preview(body: String): String = body.replace('\n', ' ').trim().take(96)
+
     /** In-memory call filter: best rank first, newest first when ranks tie. */
     fun calls(query: String, calls: List<CallEntry>): List<CallEntry> =
         calls.mapNotNull { entry ->

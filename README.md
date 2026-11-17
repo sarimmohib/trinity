@@ -74,6 +74,16 @@ and dark, the same on every screen.
 Settings can check GitHub for a newer release and tell you once, with the release
 notes. No background service, no account, and it can be skipped for any version.
 
+## Optional on-device semantic search
+
+A small language model can be bundled with Trinity to find texts by meaning rather than
+exact words. It is **off until you switch it on** in Settings, and it runs entirely on
+your phone — no message text is uploaded, stored in the cloud or sent anywhere. Results
+are labelled as similar rather than mixed into exact matches. This is experimental:
+quality and latency have not been measured on a device, and Roman Urdu is unvalidated.
+See `info/model-spike.md` in the context repository for the model's provenance, hashes
+and the limits of what was measured. Translation is **not** included.
+
 ## Install
 
 Download the latest `app-release.apk` from

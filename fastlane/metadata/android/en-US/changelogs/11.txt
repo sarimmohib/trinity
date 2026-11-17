@@ -1,0 +1,5 @@
+2.0.0
+
+- Added optional on-device semantic search. Turn it on in Settings to find texts by meaning, not just exact words.
+- You choose when to build the index, and you can rebuild it any time from Settings. Exact keyword matches still appear first in search.
+- The model runs entirely on your phone. No message text is uploaded, stored in the cloud or sent anywhere.

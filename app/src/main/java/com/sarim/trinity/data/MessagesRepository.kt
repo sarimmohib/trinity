@@ -36,6 +36,9 @@ fun isMmsMessageId(id: Long): Boolean = id < 0 && id < MMS_ID_OFFSET / 2
  */
 private const val MMS_SECONDS_CEILING = 100_000_000_000L
 
+/** Hard cap on how many messages one indexing pass may read from the providers. */
+const val EMBED_MESSAGE_CAP = 20_000
+
 class MessagesRepository(private val context: Context) {
 
     private val contactsRepo = ContactsRepository(context)
@@ -59,6 +62,58 @@ class MessagesRepository(private val context: Context) {
                 null,
             )?.use { true } ?: false
         }.getOrDefault(false)
+    }
+
+    /**
+     * Bounded id/body pass over SMS and MMS for the local embedding index. Ids match the
+     * rest of the app: SMS keeps its positive provider id, MMS is shifted into the
+     * far-negative band by [MMS_ID_OFFSET]. The caller runs this on Dispatchers.IO; it
+     * never touches the network and never leaves the device.
+     */
+    suspend fun allForEmbedding(): List<Pair<Long, String>> = withContext(Dispatchers.IO) {
+        if (!hasPermission()) return@withContext emptyList()
+        val out = ArrayList<Pair<Long, String>>()
+        runCatching {
+            context.contentResolver.query(
+                Telephony.Sms.CONTENT_URI,
+                arrayOf(Telephony.Sms._ID, Telephony.Sms.BODY),
+                null,
+                null,
+                "${Telephony.Sms.DATE} DESC LIMIT $EMBED_MESSAGE_CAP",
+            )?.use { cursor ->
+                val idAt = cursor.getColumnIndexOrThrow(Telephony.Sms._ID)
+                val bodyAt = cursor.getColumnIndexOrThrow(Telephony.Sms.BODY)
+                while (cursor.moveToNext() && out.size < EMBED_MESSAGE_CAP) {
+                    val body = cursor.getString(bodyAt).orEmpty().trim()
+                    if (body.isEmpty()) continue
+                    out += cursor.getLong(idAt) to body
+                }
+            }
+        }
+        val remaining = EMBED_MESSAGE_CAP - out.size
+        if (remaining > 0) {
+            runCatching {
+                context.contentResolver.query(
+                    Telephony.Mms.CONTENT_URI,
+                    arrayOf(Telephony.Mms._ID, Telephony.Mms.SUBJECT, "text"),
+                    null,
+                    null,
+                    "${Telephony.Mms.DATE} DESC LIMIT $remaining",
+                )?.use { cursor ->
+                    val idAt = cursor.getColumnIndexOrThrow(Telephony.Mms._ID)
+                    val subjectAt = cursor.getColumnIndex(Telephony.Mms.SUBJECT)
+                    val textAt = cursor.getColumnIndex("text")
+                    while (cursor.moveToNext() && out.size < EMBED_MESSAGE_CAP) {
+                        val subject = if (subjectAt >= 0) cursor.getString(subjectAt) else null
+                        val text = if (textAt >= 0) cursor.getString(textAt) else null
+                        val body = mmsBody(subject, text)
+                        if (body.isBlank()) continue
+                        out += (MMS_ID_OFFSET + cursor.getLong(idAt)) to body
+                    }
+                }
+            }
+        }
+        out
     }
 
     /**

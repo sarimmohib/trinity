@@ -171,7 +171,8 @@ fun SearchScreen(
 
         val hasResults = results.calls.isNotEmpty() ||
             results.messages.isNotEmpty() ||
-            results.contacts.isNotEmpty()
+            results.contacts.isNotEmpty() ||
+            results.related.isNotEmpty()
 
         when {
             query.isBlank() -> {
@@ -233,6 +234,20 @@ fun SearchScreen(
                                 }
                             }
                         }
+                        if (results.related.isNotEmpty()) {
+                            item(key = "section-related") {
+                                SectionLabel(
+                                    "RELATED",
+                                    results.related.size,
+                                    "ON THIS DEVICE · SIMILAR WORDS",
+                                )
+                            }
+                            items(results.related, key = { "rel-${it.message.id}" }) { hit ->
+                                MessageHitRow(hit, query) {
+                                    onOpenThread(hit.threadId, hit.message.address, hit.message.id)
+                                }
+                            }
+                        }
                         if (results.contacts.isNotEmpty()) {
                             item(key = "section-contacts") {
                                 SectionLabel("CONTACTS", results.contacts.size)
@@ -266,15 +281,20 @@ fun SearchScreen(
 private fun accent(index: Int) = Palette.Accents[index % Palette.Accents.size]
 
 @Composable
-private fun SectionLabel(title: String, count: Int) {
-    Row(
+private fun SectionLabel(title: String, count: Int, note: String? = null) {
+    Column(
         Modifier
             .fillMaxWidth()
             .padding(start = 24.dp, end = 24.dp, top = 14.dp, bottom = 6.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        MonoLabel(title, color = Palette.Ink, size = 9)
-        MonoLabel(count.toString(), color = Palette.Faint, size = 9)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            MonoLabel(title, color = Palette.Ink, size = 9)
+            MonoLabel(count.toString(), color = Palette.Faint, size = 9)
+        }
+        if (note != null) {
+            Spacer(Modifier.height(3.dp))
+            MonoLabel(note, color = Palette.Faint, size = 7)
+        }
     }
 }
 

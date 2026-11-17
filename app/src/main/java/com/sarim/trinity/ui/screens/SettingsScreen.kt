@@ -33,6 +33,7 @@ import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.PersonOff
 import androidx.compose.material.icons.outlined.Phone
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Security
 import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material.icons.outlined.Smartphone
@@ -62,6 +63,7 @@ import com.sarim.trinity.data.RulePack
 import com.sarim.trinity.data.ScreeningAction
 import com.sarim.trinity.data.ScreeningPrefs
 import com.sarim.trinity.data.ScreeningSettings
+import com.sarim.trinity.ml.EmbeddingEngine
 import com.sarim.trinity.ui.TrinityState
 import com.sarim.trinity.ui.components.Hairline
 import com.sarim.trinity.ui.components.InkSheet
@@ -363,6 +365,41 @@ fun SettingsScreen(
             MonoLabel(note, size = 7, color = Palette.Faint, modifier = Modifier.padding(start = 24.dp))
         }
 
+        SettingsSection("SEMANTIC SEARCH")
+        SettingsRow(
+            label = "Semantic search",
+            value = if (state.semanticEnabled) "ON" else "OFF",
+            sub = "MODEL RUNS ON THIS DEVICE · NO MESSAGE LEAVES THE PHONE",
+            icon = Icons.Outlined.Search,
+            toggle = state.semanticEnabled,
+            onToggle = { state.setSemanticSearch(it) },
+        )
+        StaticRow(
+            label = "Index status",
+            value = "",
+            sub = state.indexStatus,
+        )
+        SettingsRow(
+            label = "Rebuild index",
+            value = "LOCAL",
+            sub = "RE-EMBEDS MESSAGES ON THIS DEVICE",
+            icon = Icons.Outlined.Storage,
+            onClick = { if (state.semanticEnabled) state.rebuildEmbeddingIndex() },
+        )
+        MonoLabel(
+            "${indexSizeLabel(state.indexedCount)} INDEX · ${state.indexedCount} MESSAGES · " +
+                "${EmbeddingEngine.DIM} BYTES EACH (INT8)",
+            size = 7,
+            color = Palette.Faint,
+            modifier = Modifier.padding(start = 24.dp),
+        )
+        MonoLabel(
+            "EXPERIMENTAL · QUALITY AND LATENCY NOT MEASURED ON A DEVICE · ROMAN URDU UNVALIDATED",
+            size = 7,
+            color = Palette.Faint,
+            modifier = Modifier.padding(start = 24.dp, top = 4.dp),
+        )
+
         SettingsSection("SETTINGS BACKUP")
         SettingsRow(
             label = "Export settings",
@@ -526,7 +563,8 @@ fun SettingsScreen(
 
         Box(Modifier.padding(24.dp)) {
             Text(
-                "Rules, held texts and drafts never leave this device.",
+                "Rules, held texts and drafts never leave this device. " +
+                    "Semantic search runs on device too — no message is sent anywhere.",
                 fontSize = 10.sp,
                 color = Palette.Faint,
                 lineHeight = 16.sp,
@@ -722,6 +760,16 @@ fun SettingsScreen(
             ),
             onDismiss = { confirm = null },
         )
+    }
+}
+
+/** Human-readable size from the indexed count times the int8 vector width. */
+private fun indexSizeLabel(count: Int): String {
+    val bytes = count.toLong() * EmbeddingEngine.DIM
+    return when {
+        bytes >= 1_000_000 -> "${bytes / 1_000_000} MB"
+        bytes >= 1_000 -> "${bytes / 1_000} KB"
+        else -> "$bytes B"
     }
 }
 

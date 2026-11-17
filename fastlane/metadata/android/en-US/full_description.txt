@@ -6,7 +6,10 @@ CALLS
 Your call log, grouped by person, with direction, duration and time. A dial pad, and in-call controls: mute, speaker, keypad and hang up. Incoming calls show who is calling even when the number arrives in a different format than the one saved in your contacts. When a call ends, a short summary tells you whether it was answered, missed, declined, busy or failed, how long it lasted and who hung up.
 
 MESSAGES
-Conversations and threads grouped by person, quick reply from the notification, sending, forwarding, copying and deleting, muting a conversation, and starting a new message from a number.
+Conversations and threads grouped by person, quick reply from the notification, sending, forwarding, copying and deleting, muting a conversation, and starting a new message from a number. Picture messages are received, shown and sent while Trinity holds the SMS role; blocked ones are held for review. One search field finds a call, a text or a contact. Texts can be scheduled for later and cancelled before they go out. Text threads can be backed up to JSON and restored, with duplicates skipped. Picture messages are not part of that backup.
+
+OPTIONAL ON-DEVICE MODEL
+Semantic search can find texts by meaning instead of exact words. It is off until you switch it on, and the small language model runs entirely on your phone - no message text is uploaded, stored in the cloud or sent anywhere. It is experimental: search quality and speed have not been measured on a device, and Roman Urdu is unvalidated. Exact keyword matches still come first.
 
 CONTACTS
 Your address book with per-person call and message history. Add, edit and delete contacts, set a contact photo straight into the phone's contacts - Trinity keeps no copy. WhatsApp availability when WhatsApp shares its contacts, with chat and call shortcuts, and an indicator that says whether your contacts are actually syncing.
