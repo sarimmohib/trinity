@@ -221,6 +221,8 @@ class TrinityInCallService : InCallService() {
         // the primary call owns the notification and the foreground slot.
         val posted = CallNotifier.update(this, primary)
         if (posted != null) holdForeground(posted)
+        // Missed-call count on the widget follows the live call state.
+        runCatching { com.sarim.trinity.widget.TrinityWidgetProvider.refresh(this) }
     }
 
     private fun buildLive(tracked: Tracked): LiveCall {

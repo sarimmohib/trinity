@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="widget_label">Trinity</string>
+    <string name="widget_zero">0</string>
+    <string name="widget_unread">UNREAD</string>
+    <string name="widget_missed">MISSED TODAY</string>
+    <string name="widget_held">HELD</string>
+    <string name="tile_screening_on">Screening on</string>
+    <string name="tile_screening_off">Screening off</string>
+</resources>

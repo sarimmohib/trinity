@@ -166,5 +166,39 @@
             android:showWhenLocked="true"
             android:turnScreenOn="true"
             android:theme="@style/Theme.Trinity" />
+
+        <!-- Home-screen widget: unread messages, missed calls today and held texts. -->
+        <receiver
+            android:name=".widget.TrinityWidgetProvider"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/trinity_widget_info" />
+        </receiver>
+
+        <!-- Quick settings tile for unknown-caller screening. BIND_QUICK_SETTINGS_TILE is
+             a signature-only permission: the system enforces it through android:permission
+             on this service, so there is deliberately no <uses-permission> for it. -->
+        <service
+            android:name=".widget.TrinityTileService"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
+        <!-- Android routes a long-press on the tile to this activity, not to TileService. -->
+        <activity
+            android:name=".widget.TrinityTilePreferencesActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.NoDisplay">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE_PREFERENCES" />
+            </intent-filter>
+        </activity>
     </application>
 </manifest>

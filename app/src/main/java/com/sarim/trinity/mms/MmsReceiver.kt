@@ -104,6 +104,7 @@ class MmsReceiver : BroadcastReceiver() {
                 ),
             )
             MessageNotifier.showHeld(context, QuarantineStore(context).all().size)
+            runCatching { com.sarim.trinity.widget.TrinityWidgetProvider.refresh(context) }
             finish()
             return
         }
@@ -136,6 +137,7 @@ class MmsReceiver : BroadcastReceiver() {
                     // stay retryable when the carrier resends the notification.
                     MmsDedupe.remember(context, messageId)
                     notify(context, id, address, name)
+                    runCatching { com.sarim.trinity.widget.TrinityWidgetProvider.refresh(context) }
                 } else {
                     MmsDedupe.forget(context, messageId)
                 }

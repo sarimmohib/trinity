@@ -411,6 +411,7 @@ class SmsDeliverReceiver : BroadcastReceiver() {
             )
             Log.i("Trinity", "quarantined SMS from $address by ${hit.kind} '${hit.value}'")
             MessageNotifier.showHeld(context, QuarantineStore(context).all().size)
+            runCatching { com.sarim.trinity.widget.TrinityWidgetProvider.refresh(context) }
             return
         }
 
@@ -475,6 +476,7 @@ class SmsDeliverReceiver : BroadcastReceiver() {
                 )
             }
         }
+        runCatching { com.sarim.trinity.widget.TrinityWidgetProvider.refresh(context) }
     }
 }
 

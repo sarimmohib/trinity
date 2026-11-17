@@ -1,0 +1,6 @@
+1.3.1
+
+- Added a home-screen widget with unread message, missed call and held text counts. Tap a count to jump to that screen.
+- Added a quick settings tile to turn unknown-caller screening on or off. Long-press the tile to open Trinity's settings.
+- Favourites and contact groups now appear in the contacts list.
+- Duplicate contacts can be found and merged from one sheet.

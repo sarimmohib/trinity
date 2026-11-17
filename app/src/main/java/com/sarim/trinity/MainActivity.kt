@@ -86,6 +86,9 @@ class MainActivity : ComponentActivity() {
     /** A tel: hand-off from another app, waiting to be shown on the dial pad. */
     private val dialRequests = MutableStateFlow<String?>(null)
 
+    /** The tab a home-screen widget row asked for. */
+    private val widgetTab = MutableStateFlow<Int?>(null)
+
     /** An sms:/mms: hand-off from another app, waiting to open a thread or composer. */
     private val messageRequests = MutableStateFlow<String?>(null)
 
@@ -99,7 +102,7 @@ class MainActivity : ComponentActivity() {
         uptake(intent)
         setContent {
             TrinityTheme {
-                TrinityApp(dialRequests, messageRequests, threadRequests)
+                TrinityApp(dialRequests, messageRequests, threadRequests, widgetTab)
             }
         }
     }
@@ -112,6 +115,8 @@ class MainActivity : ComponentActivity() {
 
     private fun uptake(intent: Intent?) {
         if (intent == null) return
+        intent.getIntExtra(com.sarim.trinity.widget.TrinityWidgetProvider.EXTRA_TAB, -1)
+            .takeIf { it in 0..3 }?.let { widgetTab.value = it }
         val threadId = intent.getLongExtra(MessageNotifier.EXTRA_THREAD, -1L)
         if (threadId >= 0) {
             threadRequests.value = threadId to intent.getStringExtra(MessageNotifier.EXTRA_ADDRESS).orEmpty()
@@ -151,6 +156,7 @@ private fun TrinityApp(
     dialRequests: MutableStateFlow<String?>,
     messageRequests: MutableStateFlow<String?>,
     threadRequests: MutableStateFlow<Pair<Long, String>?>,
+    widgetTab: MutableStateFlow<Int?>,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -184,6 +190,16 @@ private fun TrinityApp(
             route = backStack.removeAt(backStack.lastIndex)
         } else {
             route = parentOf(route)
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        widgetTab.collect { tab ->
+            if (tab != null) {
+                widgetTab.value = null
+                // 3 is the Held screen, not a tab index (2 is Contacts).
+                go(if (tab == 3) Route.Held else Route.Tab(tab))
+            }
         }
     }
 
