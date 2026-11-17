@@ -54,7 +54,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.runtime.collectAsState
 import com.sarim.trinity.data.BlockMatcher
 import com.sarim.trinity.data.CallEntry
 import com.sarim.trinity.data.Channels
@@ -86,7 +86,7 @@ fun PersonScreen(
 ) {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
-    val rules by state.blockStore.rules.collectAsStateWithLifecycle()
+    val rules by state.blockStore.rules.collectAsState()
     val hit = BlockMatcher.match(person.name, person.number, null, rules)
     val calls = state.callsFor(person.number)
     val thread = state.conversationForNumber(person.number)

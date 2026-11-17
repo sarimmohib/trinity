@@ -51,7 +51,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.runtime.collectAsState
 import com.sarim.trinity.data.BlockMatcher
 import com.sarim.trinity.data.ContactDuplicates
 import com.sarim.trinity.data.Person
@@ -85,7 +85,7 @@ fun ContactsScreen(
     var query by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
-    val rules by state.blockStore.rules.collectAsStateWithLifecycle()
+    val rules by state.blockStore.rules.collectAsState()
     val selection = remember { Selection<Person> { it.id } }
     var confirmBulkDelete by remember { mutableStateOf(false) }
     val clipboard = LocalClipboardManager.current

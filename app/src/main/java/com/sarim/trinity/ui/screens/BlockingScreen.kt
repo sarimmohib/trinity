@@ -52,7 +52,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.runtime.collectAsState
 import com.sarim.trinity.data.AuditStore
 import com.sarim.trinity.data.BlockStore
 import com.sarim.trinity.data.CompoundRule
@@ -85,7 +85,7 @@ fun BlockingScreen(
     var patternError by remember { mutableStateOf<String?>(null) }
     // New rules start covering both surfaces; the choice sticks for the next one.
     var scope by remember { mutableStateOf(Scope.Both) }
-    val rules by state.blockStore.rules.collectAsStateWithLifecycle()
+    val rules by state.blockStore.rules.collectAsState()
     // The combined rule being built: how its conditions join, and the ones added so far.
     var match by remember { mutableStateOf(Match.All) }
     var field by remember { mutableStateOf(Field.Name) }

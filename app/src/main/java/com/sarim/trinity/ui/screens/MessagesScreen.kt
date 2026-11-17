@@ -47,7 +47,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.runtime.collectAsState
 import com.sarim.trinity.data.Conversation
 import com.sarim.trinity.data.RuleHit
 import com.sarim.trinity.ui.TrinityState
@@ -78,7 +78,7 @@ fun MessagesScreen(
     onReview: () -> Unit,
     onSettings: () -> Unit,
 ) {
-    val rules by state.blockStore.rules.collectAsStateWithLifecycle()
+    val rules by state.blockStore.rules.collectAsState()
     // Sorted into hidden and shown once per conversation list, not on every recomposition.
     val hiddenThreads = remember(state.conversations) {
         state.conversations.count { it.rule?.hidesSender == true }

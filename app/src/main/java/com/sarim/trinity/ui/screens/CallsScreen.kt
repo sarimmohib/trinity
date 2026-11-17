@@ -48,7 +48,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.runtime.collectAsState
 import com.sarim.trinity.R
 import com.sarim.trinity.data.CallEntry
 import com.sarim.trinity.data.ContactChannels
@@ -98,7 +98,7 @@ fun CallsScreen(
     // that just ended is already at the top.
     LaunchedEffect(Unit) { state.refreshIfStale() }
 
-    val rules by state.blockStore.rules.collectAsStateWithLifecycle()
+    val rules by state.blockStore.rules.collectAsState()
     val clipboard = LocalClipboardManager.current
     val context = LocalContext.current
     // WhatsApp is offered on every call row only where there is an app to take it.

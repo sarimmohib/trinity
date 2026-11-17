@@ -13,8 +13,8 @@ android {
         applicationId = "com.sarim.trinity"
         minSdk = 26
         targetSdk = 35
-        versionCode = 11
-        versionName = "2.0.0"
+        versionCode = 12
+        versionName = "2.0.1"
 
         // ONNX Runtime ships native libraries for four ABIs. Phones use the two ARM
         // ones; dropping x86/x86_64 keeps the bundled-model APK under the 80 MB

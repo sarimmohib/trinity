@@ -56,7 +56,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.runtime.collectAsState
 import com.sarim.trinity.BuildConfig
 import com.sarim.trinity.data.Links
 import com.sarim.trinity.data.RulePack
@@ -83,7 +83,7 @@ fun SettingsScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val rules by state.blockStore.rules.collectAsStateWithLifecycle()
+    val rules by state.blockStore.rules.collectAsState()
     val smsDefault = state.isDefaultSmsApp()
     val dialerDefault = state.isDefaultDialer()
     val screeningHeld = state.isCallScreeningRoleHeld()
