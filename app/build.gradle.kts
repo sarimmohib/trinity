@@ -13,8 +13,15 @@ android {
         applicationId = "com.sarim.trinity"
         minSdk = 26
         targetSdk = 35
-        versionCode = 10
-        versionName = "1.4.0"
+        versionCode = 11
+        versionName = "2.0.0"
+
+        // ONNX Runtime ships native libraries for four ABIs. Phones use the two ARM
+        // ones; dropping x86/x86_64 keeps the bundled-model APK under the 80 MB
+        // size ceiling measured in the M8 spike (46.4 MB instead of 84.4 MB).
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+        }
     }
 
     testOptions {
@@ -95,6 +102,8 @@ dependencies {
     // Installs the baseline profiles Compose ships, so a release build starts out
     // precompiled instead of interpreting its UI code until the JIT warms up.
     implementation("androidx.profileinstaller:profileinstaller:1.3.1")
+    // M8 local embeddings: on-device ONNX Runtime for the bundled MiniLM model.
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.18.0")
 
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")
