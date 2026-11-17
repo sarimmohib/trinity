@@ -11,3 +11,7 @@ local.properties
 
 # Earlier paper-era mockups stay local; the repo carries the app only.
 /design/
+
+# Release signing material: never commit the keystore or its credentials.
+keystore.properties
+*.jks

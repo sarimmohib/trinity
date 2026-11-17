@@ -1,0 +1,5 @@
+1.4.0
+
+- Settings can now be exported and imported as one backup file, so you can move your rules and preferences to another phone.
+- Updated for Android 15 (target SDK 35) compatibility.
+- Documented how to create a release signing key and wire it into builds; source builds still work without one.

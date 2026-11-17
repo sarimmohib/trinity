@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -5,18 +7,38 @@ plugins {
 
 android {
     namespace = "com.sarim.trinity"
-    compileSdk = 34
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "com.sarim.trinity"
         minSdk = 26
-        targetSdk = 34
-        versionCode = 9
-        versionName = "1.3.1"
+        targetSdk = 35
+        versionCode = 10
+        versionName = "1.4.0"
     }
 
     testOptions {
         unitTests.isReturnDefaultValues = true
+    }
+
+    signingConfigs {
+        // A real release key is optional. keystore.properties is gitignored and lives
+        // only at the repo root; when it is absent every build keeps signing with the
+        // debug key, so a build from source still installs and updates over itself.
+        // Release-key generation and storage are documented in the private tokens repo;
+        // targetSdk 35 checks are recorded in info/targetsdk-35.md in the context repo.
+        val keystorePropertiesFile = rootProject.file("keystore.properties")
+        if (keystorePropertiesFile.exists()) {
+            val keystoreProperties = Properties().apply {
+                keystorePropertiesFile.inputStream().use { load(it) }
+            }
+            create("release") {
+                storeFile = rootProject.file(keystoreProperties.getProperty("storeFile"))
+                storePassword = keystoreProperties.getProperty("storePassword")
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+            }
+        }
     }
 
     buildTypes {
@@ -29,10 +51,11 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
-            // Signed with the debug key so a build from source installs and updates
-            // over itself without an upload key. Replace it with your own key for a
-            // store release; F-Droid signs the builds it publishes.
-            signingConfig = signingConfigs.getByName("debug")
+            // Signed with the debug key unless keystore.properties supplies a real
+            // release key, so a build from source installs and updates over itself.
+            // F-Droid signs the builds it publishes with its own key.
+            signingConfig = signingConfigs.findByName("release")
+                ?: signingConfigs.getByName("debug")
         }
     }
 
